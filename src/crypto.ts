@@ -2,7 +2,7 @@ declare global {
   interface Window {
     nostr?: {
       nip44: {
-        encrypt: (params: { pubkey: string; text: string }) => Promise<string>;
+        encrypt: (pubkey: string, text: string) => Promise<string>;
         decrypt: (params: {
           pubkey: string;
           ciphertext: string;
