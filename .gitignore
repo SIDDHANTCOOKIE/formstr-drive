@@ -1,0 +1,27 @@
+# Ignore node_modules directory
+node_modules/
+
+# Ignore npm cache
+.npm-cache/
+
+# Ignore compiled output directory
+dist/
+build/
+
+# Ignore environment variables
+.env
+
+# Ignore macOS specific files
+.DS_Store
+
+# Ignore Vite-specific files
+.vite/
+
+# Ignore TypeScript build info files
+*.tsbuildinfo
+
+# Ignore TypeScript config backups
+tsconfig.json~
+
+# Ignore public directory (if needed, otherwise remove this line)
+public/
