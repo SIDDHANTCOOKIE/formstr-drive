@@ -55,6 +55,16 @@ export async function encryptFile(fileBytes: Uint8Array): Promise<string> {
 export async function decryptFile(ciphertext: string): Promise<Uint8Array> {
   if (!window.nostr) throw new Error("Nostr signer not found");
   const pubkey = await window.nostr.getPublicKey();
-  const plaintext = await window.nostr.nip44.decrypt({ pubkey, ciphertext });
-  return new TextEncoder().encode(plaintext);
+  console.log("Decrypting with pubkey:", pubkey, "ciphertext length:", ciphertext.length);
+
+  // Alby uses positional args: decrypt(peer, ciphertext)
+  const plaintextBase64 = await (window.nostr.nip44.decrypt as any)(pubkey, ciphertext);
+
+  console.log("Decrypted result type:", typeof plaintextBase64, "length:", plaintextBase64?.length, "starts with:", plaintextBase64?.slice(0, 50));
+
+  if (!plaintextBase64) {
+    throw new Error("Decryption returned empty result - did you cancel the prompt?");
+  }
+
+  return base64ToUint8Array(plaintextBase64);
 }

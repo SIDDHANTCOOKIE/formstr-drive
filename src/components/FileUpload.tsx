@@ -1,27 +1,45 @@
 import React, { useState } from "react";
 import { encryptFile } from "../crypto";
 import { createAuthEvent } from "../auth";
-import { BlossomClient } from "../blossom";
-
-const SERVER_URL = "https://blossom.primal.net";
+import { BlossomClient, BlossomError } from "../blossom";
+import { useBlossomServer } from "../contexts/BlossomServerContext";
 
 export const FileUpload: React.FC = () => {
+  const { selectedServer } = useBlossomServer();
   const [file, setFile] = useState<File | null>(null);
   const [sha256, setSha256] = useState<string | null>(null);
-
-  const client = new BlossomClient(SERVER_URL);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<{ message: string; isCorsError: boolean } | null>(null);
 
   const handleUpload = async () => {
     console.log("is file?", file);
     if (!file) return;
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    const ciphertext = await encryptFile(bytes);
-    console.log("Encrypted file", ciphertext);
-    const auth = await createAuthEvent("upload", `Upload ${file.name}`);
-    console.log("Got auth as ", auth);
-    const sha = await client.upload(new TextEncoder().encode(ciphertext), auth);
-    console.log("Uploaded file", sha);
-    setSha256(sha);
+
+    setLoading(true);
+    setError(null);
+    setSha256(null);
+
+    try {
+      const client = new BlossomClient(selectedServer);
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const ciphertext = await encryptFile(bytes);
+      console.log("Encrypted file", ciphertext);
+      const auth = await createAuthEvent("upload", `Upload ${file.name}`);
+      console.log("Got auth as ", auth);
+      const sha = await client.upload(new TextEncoder().encode(ciphertext), auth);
+      console.log("Uploaded file", sha);
+      setSha256(sha);
+    } catch (e) {
+      if (e instanceof BlossomError) {
+        setError({ message: e.message, isCorsError: e.isCorsError });
+      } else if (e instanceof Error) {
+        setError({ message: e.message, isCorsError: false });
+      } else {
+        setError({ message: "An unknown error occurred", isCorsError: false });
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -30,10 +48,20 @@ export const FileUpload: React.FC = () => {
         type="file"
         onChange={(e) => setFile(e.target.files?.[0] ?? null)}
       />
-      <button onClick={handleUpload} disabled={!file}>
-        Upload
+      <button onClick={handleUpload} disabled={!file || loading}>
+        {loading ? "Uploading..." : "Upload"}
       </button>
       {sha256 && <p>Uploaded SHA256: {sha256}</p>}
+      {error && (
+        <div className="error-message">
+          <p>{error.message}</p>
+          {error.isCorsError && (
+            <p className="cors-help">
+              This server may not allow requests from your browser. Try selecting a different server or adding a server that supports CORS.
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 };
