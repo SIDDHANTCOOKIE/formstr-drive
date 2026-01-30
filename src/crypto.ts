@@ -3,13 +3,10 @@ declare global {
     nostr?: {
       nip44: {
         encrypt: (pubkey: string, text: string) => Promise<string>;
-        decrypt: (params: {
-          pubkey: string;
-          ciphertext: string;
-        }) => Promise<string>;
+        decrypt: (params: { pubkey: string; ciphertext: string }) => Promise<string>;
       };
       getPublicKey: () => Promise<string>;
-      signEvent?: (event: any) => Promise<any>; // NIP-07
+      signEvent: (event: object) => Promise<object>;
     };
   }
 }
@@ -39,14 +36,10 @@ export function base64ToUint8Array(b64: string): Uint8Array {
 }
 
 export async function encryptFile(fileBytes: Uint8Array): Promise<string> {
-  console.log("Window. nostr", window.nostr);
   if (!window.nostr) throw new Error("Nostr signer not found");
   const pubkey = await window.nostr.getPublicKey();
   const plaintextBase64 = uint8ArrayToBase64(fileBytes);
-  console.log("plaintext is", plaintextBase64, "pubkey is", pubkey);
-  const ciphertext = await window.nostr.nip44.encrypt(pubkey, plaintextBase64);
-  console.log("ciphertext is", ciphertext);
-  return ciphertext;
+  return window.nostr.nip44.encrypt(pubkey, plaintextBase64);
 }
 
 /**
@@ -55,12 +48,9 @@ export async function encryptFile(fileBytes: Uint8Array): Promise<string> {
 export async function decryptFile(ciphertext: string): Promise<Uint8Array> {
   if (!window.nostr) throw new Error("Nostr signer not found");
   const pubkey = await window.nostr.getPublicKey();
-  console.log("Decrypting with pubkey:", pubkey, "ciphertext length:", ciphertext.length);
 
   // Alby uses positional args: decrypt(peer, ciphertext)
   const plaintextBase64 = await (window.nostr.nip44.decrypt as any)(pubkey, ciphertext);
-
-  console.log("Decrypted result type:", typeof plaintextBase64, "length:", plaintextBase64?.length, "starts with:", plaintextBase64?.slice(0, 50));
 
   if (!plaintextBase64) {
     throw new Error("Decryption returned empty result - did you cancel the prompt?");

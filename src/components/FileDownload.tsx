@@ -49,11 +49,8 @@ export const FileDownload: React.FC = () => {
     try {
       const client = new BlossomClient(selectedServer);
       const auth = await createAuthEvent("get", `Get ${sha256}`);
-      console.log("Downloading from:", selectedServer, "hash:", sha256);
       const blob = await client.download(sha256, auth);
-      console.log("Downloaded blob size:", blob.length, "first 100 bytes:", new TextDecoder().decode(blob.slice(0, 100)));
       const ciphertext = new TextDecoder().decode(blob);
-      console.log("Ciphertext length:", ciphertext.length, "starts with:", ciphertext.slice(0, 50));
       const decrypted = await decryptFile(ciphertext);
       setContent(decrypted);
     } catch (e) {
@@ -86,7 +83,7 @@ export const FileDownload: React.FC = () => {
           <button
             onClick={() => {
               const { mime, ext } = detectFileType(content);
-              const blob = new Blob([content], { type: mime });
+              const blob = new Blob([content as BlobPart], { type: mime });
               const url = URL.createObjectURL(blob);
               const a = document.createElement("a");
               a.href = url;

@@ -1,0 +1,109 @@
+import { useState } from "react";
+import type { FileMetadata } from "../types/metadata";
+import { useFileIndex } from "../contexts/FileIndexContext";
+import { decryptFile } from "../crypto";
+import { createAuthEvent } from "../auth";
+import { BlossomClient } from "../blossom";
+
+interface FileCardProps {
+  file: FileMetadata;
+}
+
+function getFileIcon(type: string): string {
+  if (type.startsWith("image/")) return "img";
+  if (type.startsWith("video/")) return "vid";
+  if (type.startsWith("audio/")) return "aud";
+  if (type === "application/pdf") return "pdf";
+  if (type.includes("zip") || type.includes("archive")) return "zip";
+  if (type.includes("text") || type.includes("json")) return "txt";
+  return "file";
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+  return (bytes / (1024 * 1024 * 1024)).toFixed(1) + " GB";
+}
+
+function formatDate(timestamp: number): string {
+  return new Date(timestamp).toLocaleDateString();
+}
+
+export function FileCard({ file }: FileCardProps) {
+  const { deleteFile } = useFileIndex();
+  const [downloading, setDownloading] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleDownload = async () => {
+    setDownloading(true);
+    setError(null);
+    try {
+      const client = new BlossomClient(file.server);
+      const auth = await createAuthEvent("get", `Get ${file.hash}`);
+      const blob = await client.download(file.hash, auth);
+      const ciphertext = new TextDecoder().decode(blob);
+      const decrypted = await decryptFile(ciphertext);
+
+      const url = URL.createObjectURL(new Blob([decrypted as BlobPart], { type: file.type }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = file.name;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Download failed");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (confirm(`Delete "${file.name}"?`)) {
+      await deleteFile(file.hash);
+    }
+    setShowMenu(false);
+  };
+
+  const icon = getFileIcon(file.type);
+
+  return (
+    <div className="file-card">
+      <div className="file-icon" data-type={icon}>
+        {icon.toUpperCase()}
+      </div>
+      <div className="file-info">
+        <span className="file-name" title={file.name}>
+          {file.name}
+        </span>
+        <span className="file-meta">
+          {formatSize(file.size)} · {formatDate(file.uploadedAt)}
+        </span>
+      </div>
+      <div className="file-actions">
+        <button
+          className="action-btn"
+          onClick={handleDownload}
+          disabled={downloading}
+          title="Download"
+        >
+          {downloading ? "..." : "↓"}
+        </button>
+        <button
+          className="action-btn menu-btn"
+          onClick={() => setShowMenu(!showMenu)}
+          title="More"
+        >
+          ⋮
+        </button>
+        {showMenu && (
+          <div className="file-menu">
+            <button onClick={handleDelete}>Delete</button>
+          </div>
+        )}
+      </div>
+      {error && <div className="file-error">{error}</div>}
+    </div>
+  );
+}
