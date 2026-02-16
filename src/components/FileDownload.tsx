@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { decryptFile } from "../crypto";
+import { decryptFileWithKey } from "../crypto";
 import { createAuthEvent } from "../auth";
 import { BlossomClient, BlossomError } from "../blossom";
 import { useBlossomServer } from "../contexts/BlossomServerContext";
@@ -37,6 +37,7 @@ function detectFileType(bytes: Uint8Array): { mime: string; ext: string } {
 export const FileDownload: React.FC = () => {
   const { selectedServer } = useBlossomServer();
   const [sha256, setSha256] = useState("");
+  const [privateKey, setPrivateKey] = useState("");
   const [content, setContent] = useState<Uint8Array | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<{ message: string; isCorsError: boolean } | null>(null);
@@ -51,7 +52,7 @@ export const FileDownload: React.FC = () => {
       const auth = await createAuthEvent("get", `Get ${sha256}`);
       const blob = await client.download(sha256, auth);
       const ciphertext = new TextDecoder().decode(blob);
-      const decrypted = await decryptFile(ciphertext);
+      const decrypted = await decryptFileWithKey(ciphertext, privateKey);
       setContent(decrypted);
     } catch (e) {
       if (e instanceof BlossomError) {
@@ -74,7 +75,13 @@ export const FileDownload: React.FC = () => {
         onChange={(e) => setSha256(e.target.value)}
         placeholder="SHA256"
       />
-      <button onClick={handleDownload} disabled={!sha256 || loading}>
+      <input
+        type="text"
+        value={privateKey}
+        onChange={(e) => setPrivateKey(e.target.value)}
+        placeholder="Private Key (hex)"
+      />
+      <button onClick={handleDownload} disabled={!sha256 || !privateKey || loading}>
         {loading ? "Downloading..." : "Download"}
       </button>
       {content && (

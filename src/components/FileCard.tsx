@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { FileMetadata } from "../types/metadata";
 import { useFileIndex } from "../contexts/FileIndexContext";
-import { decryptFile } from "../crypto";
+import { decryptFileWithKey } from "../crypto";
 import { createAuthEvent } from "../auth";
 import { BlossomClient } from "../blossom";
 
@@ -31,9 +31,10 @@ function formatDate(timestamp: number): string {
 }
 
 export function FileCard({ file }: FileCardProps) {
-  const { deleteFile } = useFileIndex();
+  const { deleteFile, moveFile, folders } = useFileIndex();
   const [downloading, setDownloading] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  const [showMoveDialog, setShowMoveDialog] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleDownload = async () => {
@@ -44,7 +45,7 @@ export function FileCard({ file }: FileCardProps) {
       const auth = await createAuthEvent("get", `Get ${file.hash}`);
       const blob = await client.download(file.hash, auth);
       const ciphertext = new TextDecoder().decode(blob);
-      const decrypted = await decryptFile(ciphertext);
+      const decrypted = await decryptFileWithKey(ciphertext, file.encryptionKey);
 
       const url = URL.createObjectURL(new Blob([decrypted as BlobPart], { type: file.type }));
       const a = document.createElement("a");
@@ -64,6 +65,20 @@ export function FileCard({ file }: FileCardProps) {
       await deleteFile(file.hash);
     }
     setShowMenu(false);
+  };
+
+  const handleMoveClick = () => {
+    setShowMenu(false);
+    setShowMoveDialog(true);
+  };
+
+  const handleMove = async (newFolder: string) => {
+    try {
+      await moveFile(file.hash, newFolder);
+      setShowMoveDialog(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Move failed");
+    }
   };
 
   const icon = getFileIcon(file.type);
@@ -99,11 +114,39 @@ export function FileCard({ file }: FileCardProps) {
         </button>
         {showMenu && (
           <div className="file-menu">
-            <button onClick={handleDelete}>Delete</button>
+            <button onClick={handleMoveClick} className="move-btn">Move to Folder</button>
+            <button onClick={handleDelete} className="delete-btn">Delete</button>
           </div>
         )}
       </div>
       {error && <div className="file-error">{error}</div>}
+
+      {showMoveDialog && (
+        <div className="move-dialog-overlay" onClick={() => setShowMoveDialog(false)}>
+          <div className="move-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="move-dialog-header">
+              <h3>Move to Folder</h3>
+              <button onClick={() => setShowMoveDialog(false)}>×</button>
+            </div>
+            <div className="move-dialog-body">
+              <div className="folder-list-move">
+                {folders.map((folder) => (
+                  <button
+                    key={folder}
+                    className={`folder-option ${folder === file.folder ? "current" : ""}`}
+                    onClick={() => handleMove(folder)}
+                    disabled={folder === file.folder}
+                  >
+                    <span className="folder-icon">📁</span>
+                    <span className="folder-path">{folder}</span>
+                    {folder === file.folder && <span className="current-badge">Current</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

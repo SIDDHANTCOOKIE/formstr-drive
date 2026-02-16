@@ -39,7 +39,17 @@ export class BlossomClient {
     if (!res.ok) {
       throw new BlossomError(res.headers.get("X-Reason") || res.statusText);
     }
-    return res.text();
+
+    // Blossom servers return JSON with file info
+    const responseText = await res.text();
+    try {
+      const json = JSON.parse(responseText);
+      // Return just the sha256 hash
+      return json.sha256 || json.x || responseText;
+    } catch {
+      // If not JSON, return as-is (some servers might return just the hash)
+      return responseText;
+    }
   }
 
   async download(sha256: string, authHeader?: string): Promise<Uint8Array> {

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { encryptFile } from "../crypto";
+import { encryptFileWithKey } from "../crypto";
 import { createAuthEvent } from "../auth";
 import { BlossomClient, BlossomError } from "../blossom";
 import { useBlossomServer } from "../contexts/BlossomServerContext";
@@ -21,7 +21,7 @@ export const FileUpload: React.FC = () => {
     try {
       const client = new BlossomClient(selectedServer);
       const bytes = new Uint8Array(await file.arrayBuffer());
-      const ciphertext = await encryptFile(bytes);
+      const { ciphertext } = await encryptFileWithKey(bytes);
       const auth = await createAuthEvent("upload", `Upload ${file.name}`);
       const sha = await client.upload(new TextEncoder().encode(ciphertext), auth);
       setSha256(sha);

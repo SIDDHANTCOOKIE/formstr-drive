@@ -2,19 +2,33 @@ import { useState } from "react";
 import { useFileIndex } from "../contexts/FileIndexContext";
 
 export function FolderSidebar() {
-  const { folders, currentFolder, setCurrentFolder, files } = useFileIndex();
+  const { folders, currentFolder, setCurrentFolder, files, addCustomFolder } = useFileIndex();
   const [newFolderName, setNewFolderName] = useState("");
   const [showNewFolder, setShowNewFolder] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
 
   const handleCreateFolder = () => {
-    if (newFolderName.trim()) {
-      const path = currentFolder === "/"
-        ? "/" + newFolderName.trim()
-        : currentFolder + "/" + newFolderName.trim();
-      setCurrentFolder(path);
-      setNewFolderName("");
-      setShowNewFolder(false);
+    const name = newFolderName.trim();
+    if (!name) return;
+
+    const path = currentFolder === "/"
+      ? "/" + name
+      : currentFolder + "/" + name;
+
+    // Check if folder already exists
+    if (folders.includes(path)) {
+      setFeedback("Folder already exists!");
+      setTimeout(() => setFeedback(null), 2000);
+      return;
     }
+
+    // Add to custom folders
+    addCustomFolder(path);
+    setCurrentFolder(path);
+    setNewFolderName("");
+    setShowNewFolder(false);
+    setFeedback(`Created "${name}"`);
+    setTimeout(() => setFeedback(null), 2000);
   };
 
   const getFileCount = (folder: string) => {
@@ -45,6 +59,10 @@ export function FolderSidebar() {
         </button>
       </div>
 
+      {feedback && (
+        <div className="folder-feedback">{feedback}</div>
+      )}
+
       {showNewFolder && (
         <div className="new-folder-input">
           <input
@@ -53,12 +71,27 @@ export function FolderSidebar() {
             onChange={(e) => setNewFolderName(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") handleCreateFolder();
-              if (e.key === "Escape") setShowNewFolder(false);
+              if (e.key === "Escape") {
+                setShowNewFolder(false);
+                setNewFolderName("");
+              }
             }}
             placeholder="Folder name"
             autoFocus
           />
-          <button onClick={handleCreateFolder}>Create</button>
+          <button onClick={handleCreateFolder} title="Create folder">
+            ✓
+          </button>
+          <button
+            onClick={() => {
+              setShowNewFolder(false);
+              setNewFolderName("");
+            }}
+            className="cancel-btn"
+            title="Cancel"
+          >
+            ✕
+          </button>
         </div>
       )}
 

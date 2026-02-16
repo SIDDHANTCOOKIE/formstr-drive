@@ -4,10 +4,12 @@ import { useBlossomServer } from "../contexts/BlossomServerContext";
 
 export function UploadZone() {
   const { uploadFile } = useFileIndex();
-  const { selectedServer } = useBlossomServer();
+  const { servers, selectedServer, setSelectedServer, addCustomServer } = useBlossomServer();
   const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showServerMenu, setShowServerMenu] = useState(false);
+  const [customUrl, setCustomUrl] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFiles = useCallback(
@@ -59,29 +61,84 @@ export function UploadZone() {
     }
   };
 
+  const handleAddCustom = () => {
+    if (customUrl.trim()) {
+      addCustomServer(customUrl);
+      setCustomUrl("");
+    }
+  };
+
   return (
-    <div
-      className={`upload-zone ${isDragging ? "dragging" : ""} ${uploading ? "uploading" : ""}`}
-      onDrop={handleDrop}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onClick={handleClick}
-    >
-      <input
-        ref={fileInputRef}
-        type="file"
-        multiple
-        onChange={handleFileChange}
-        style={{ display: "none" }}
-      />
-      {uploading ? (
-        <span className="upload-status">Uploading...</span>
-      ) : (
-        <span className="upload-prompt">
-          Drop files here or click to upload
-        </span>
-      )}
-      {error && <span className="upload-error">{error}</span>}
+    <div className="upload-zone-wrapper">
+      <div
+        className={`upload-zone ${isDragging ? "dragging" : ""} ${uploading ? "uploading" : ""}`}
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onClick={handleClick}
+      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          onChange={handleFileChange}
+          style={{ display: "none" }}
+        />
+        {uploading ? (
+          <span className="upload-status">Uploading...</span>
+        ) : (
+          <span className="upload-prompt">
+            Drop files here or click to upload
+          </span>
+        )}
+        {error && <span className="upload-error">{error}</span>}
+      </div>
+
+      <div className="upload-server-selector">
+        <span className="server-label">Upload to:</span>
+        <div className="server-dropdown">
+          <button
+            className="server-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowServerMenu(!showServerMenu);
+            }}
+          >
+            {new URL(selectedServer).hostname} ▼
+          </button>
+
+          {showServerMenu && (
+            <div className="server-menu">
+              {servers.map((s) => (
+                <button
+                  key={s.url}
+                  className={selectedServer === s.url ? "active" : ""}
+                  onClick={() => {
+                    setSelectedServer(s.url);
+                    setShowServerMenu(false);
+                  }}
+                >
+                  {new URL(s.url).hostname}
+                  {s.source !== "default" && (
+                    <span className="server-source">{s.source}</span>
+                  )}
+                </button>
+              ))}
+              <div className="server-menu-divider" />
+              <div className="custom-server-row">
+                <input
+                  type="text"
+                  value={customUrl}
+                  onChange={(e) => setCustomUrl(e.target.value)}
+                  placeholder="Add server..."
+                  onKeyDown={(e) => e.key === "Enter" && handleAddCustom()}
+                />
+                <button onClick={handleAddCustom}>+</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
