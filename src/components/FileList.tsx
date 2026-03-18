@@ -1,4 +1,4 @@
-import { useFileIndex } from "../contexts/FileIndexContext";
+import { useFileIndex } from "../hooks/useFileContext";
 import { FileCard } from "./FileCard";
 import { UploadZone } from "./UploadZone";
 

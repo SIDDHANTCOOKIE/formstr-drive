@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
+import { createContext, useState, useEffect, useCallback, type ReactNode } from "react";
 import { SimplePool } from "nostr-tools";
 
 const PUBLIC_RELAYS = [
@@ -18,7 +18,7 @@ interface ServerInfo {
   source: "default" | "relay" | "custom";
 }
 
-interface BlossomServerContextType {
+export interface BlossomServerContextType {
   servers: ServerInfo[];
   selectedServer: string;
   setSelectedServer: (url: string) => void;
@@ -27,7 +27,7 @@ interface BlossomServerContextType {
   error: string | null;
 }
 
-const BlossomServerContext = createContext<BlossomServerContextType | null>(null);
+export const BlossomServerContext = createContext<BlossomServerContextType | null>(null);
 
 export function BlossomServerProvider({ children }: { children: ReactNode }) {
   const [servers, setServers] = useState<ServerInfo[]>(
@@ -114,12 +114,4 @@ export function BlossomServerProvider({ children }: { children: ReactNode }) {
       {children}
     </BlossomServerContext.Provider>
   );
-}
-
-export function useBlossomServer(): BlossomServerContextType {
-  const context = useContext(BlossomServerContext);
-  if (!context) {
-    throw new Error("useBlossomServer must be used within a BlossomServerProvider");
-  }
-  return context;
 }

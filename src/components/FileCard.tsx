@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { FileMetadata } from "../types/metadata";
-import { useFileIndex } from "../contexts/FileIndexContext";
+import { useFileIndex } from "../hooks/useFileContext";
 import { decryptFileWithKey } from "../crypto";
 import { createAuthEvent } from "../auth";
 import { BlossomClient } from "../blossom";

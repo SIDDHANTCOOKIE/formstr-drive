@@ -633,13 +633,16 @@
 
 .sign-in-card h1 {
   font-size: 32px;
-  font-weight: 600;
+  font-weight: 500;
   margin: 0 0 8px;
+}
+.sign-in-card h1 span {
+  font-weight: 1000;
 }
 
 .sign-in-card p {
   color: #666;
-  margin: 0 0 32px;
+  margin: 0 0 12px;
 }
 
 .sign-in-btn-large {
@@ -672,6 +675,7 @@
 }
 
 .sign-in-hint {
+  padding-top: 8px;
   margin-top: 16px;
   font-size: 13px;
   color: #999;
@@ -680,4 +684,36 @@
 .sign-in-error {
   margin-top: 16px;
   color: #c00;
+}
+
+/* Mobile: hidden drawer by default */
+@media (max-width: 768px) {
+  .folder-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100%;
+    z-index: 200;
+    transform: translateX(-100%);
+    transition: transform 0.5s ease;
+  }
+
+  .folder-sidebar.sidebar-open {
+    transform: translateX(0);
+  }
+
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 199;
+  }
+}
+
+/* Hide backdrop on desktop */
+@media (min-width: 769px) {
+  .sidebar-backdrop {
+    display: none !important;
+  }
 }
