@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from "react";
-import { useFileIndex } from "../contexts/FileIndexContext";
-import { useBlossomServer } from "../contexts/BlossomServerContext";
+import { useFileIndex } from "../hooks/useFileContext";
+import { useBlossomServer } from "../hooks/useBlossomServer";
 
 export function UploadZone() {
   const { uploadFile } = useFileIndex();

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { useBlossomServer } from "../contexts/BlossomServerContext";
+import { useBlossomServer } from "../hooks/useBlossomServer";
 
 export const ServerSelector: React.FC = () => {
   const { servers, selectedServer, setSelectedServer, addCustomServer, loading, error } =
