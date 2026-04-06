@@ -41,8 +41,24 @@ export function FolderSidebar({ isOpen, onClose }: FolderSidebarProps) {
     onClose();
   };
 
-  const getFileCount = (folder: string) => {
-    return files.filter((f) => f.folder === folder).length;
+  const isDirectChildFolder = (parentFolder: string, candidateFolder: string) => {
+    if (candidateFolder === "/" || candidateFolder === parentFolder) return false;
+
+    if (parentFolder === "/") {
+      return candidateFolder.split("/").filter(Boolean).length === 1;
+    }
+
+    if (!candidateFolder.startsWith(`${parentFolder}/`)) return false;
+    const relative = candidateFolder.slice(parentFolder.length + 1);
+    return relative.length > 0 && !relative.includes("/");
+  };
+
+  const getItemCount = (folder: string) => {
+    const directFileCount = files.filter((f) => f.folder === folder).length;
+    const directFolderCount = folders.filter((candidate) =>
+      isDirectChildFolder(folder, candidate)
+    ).length;
+    return directFileCount + directFolderCount;
   };
 
   const getFolderName = (path: string) => {
@@ -127,7 +143,7 @@ export function FolderSidebar({ isOpen, onClose }: FolderSidebarProps) {
                 {folder === "/" ? "◊" : "▸"}
               </span>
               <span className="folder-name">{getFolderName(folder)}</span>
-              <span className="folder-count">{getFileCount(folder)}</span>
+              <span className="folder-count">{getItemCount(folder)}</span>
             </button>
           ))}
         </nav>
