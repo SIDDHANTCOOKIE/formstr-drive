@@ -942,12 +942,12 @@
   pointer-events: auto;
 }
 
-.file-tile.active .file-tile-overlay {
+.file-tile:hover .file-tile-overlay {
   opacity: 1;
   pointer-events: auto;
 }
 
-.file-tile-overlay.open {
+.file-tile.menu-open .file-tile-overlay {
   opacity: 1;
   pointer-events: auto;
 }
