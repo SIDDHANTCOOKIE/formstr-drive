@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { FileMetadata } from "../types/metadata";
 import { useFileIndex } from "../hooks/useFileContext";
 import { decryptFile, decryptFileWithKey } from "../crypto";
@@ -42,15 +42,19 @@ async function getPreview(file: FileMetadata): Promise<string> {
   const imageUrl = URL.createObjectURL(blob);
   return imageUrl;
 }
+
 export function FileCard({ file, viewMode = "list" }: FileCardProps) {
-  const { deleteFile, moveFile, folders } = useFileIndex();
+  const { deleteFile, moveFile, folders, renameFile } = useFileIndex();
   const [downloading, setDownloading] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [showGridActions, setShowGridActions] = useState(false);
   const [showMoveDialog, setShowMoveDialog] = useState(false);
+  const [showRenameModal, setShowRenameModal] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [previewloaded, setPreviewloaded] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -84,6 +88,15 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
     };
   }, [file]);
 
+  useEffect(() => {
+    if (showRenameModal) {
+      setTimeout(() => {
+        renameInputRef.current?.focus();
+        renameInputRef.current?.select();
+      }, 0);
+    }
+  }, [showRenameModal]);
+
   const handleDownload = async () => {
     setDownloading(true);
     setError(null);
@@ -114,6 +127,29 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
     setShowMenu(false);
   };
 
+  const handleRenameOpen = () => {
+    setRenameValue(file.name);
+    setShowRenameModal(true);
+    setShowMenu(false);
+  };
+
+  const handleRenameSubmit = async () => {
+    const trimmed = renameValue.trim();
+    if (trimmed && trimmed !== file.name) {
+      try {
+        await renameFile(file.hash, trimmed);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Rename failed");
+      }
+    }
+    setShowRenameModal(false);
+  };
+
+  const handleRenameKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") handleRenameSubmit();
+    if (e.key === "Escape") setShowRenameModal(false);
+  };
+
   const handleMoveClick = () => {
     setShowMenu(false);
     setShowMoveDialog(true);
@@ -130,6 +166,35 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
 
   const icon = getFileIcon(file.type);
   const hasPreview = previewloaded && !!preview;
+
+  const renameModal = showRenameModal && (
+    <div className="move-dialog-overlay" onClick={() => setShowRenameModal(false)}>
+      <div className="move-dialog" onClick={(e) => e.stopPropagation()}>
+        <div className="move-dialog-header">
+          <h3>Rename File</h3>
+          <button onClick={() => setShowRenameModal(false)}>×</button>
+        </div>
+        <div className="move-dialog-body">
+          <input
+            ref={renameInputRef}
+            type="text"
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onKeyDown={handleRenameKeyDown}
+            className="rename-input"
+          />
+          <div className="rename-dialog-actions">
+            <button onClick={() => setShowRenameModal(false)} className="cancel-btn">
+              Cancel
+            </button>
+            <button onClick={handleRenameSubmit} className="rename-btn">
+              Rename
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 
   const moveDialog = showMoveDialog && (
     <div className="move-dialog-overlay" onClick={() => setShowMoveDialog(false)}>
@@ -218,6 +283,7 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
               {showMenu && (
                 <div className="file-menu tile-menu" onClick={(e) => e.stopPropagation()}>
                   <button onClick={handleMoveClick} className="move-btn">Move to Folder</button>
+                  <button onClick={handleRenameOpen} className="rename-btn">Rename</button>
                   <button onClick={handleDelete} className="delete-btn">Delete</button>
                 </div>
               )}
@@ -233,6 +299,7 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
           {error && <div className="file-error">{error}</div>}
         </div>
         {moveDialog}
+        {renameModal}
       </>
     );
   }
@@ -265,6 +332,7 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
           {showMenu && (
             <div className="file-menu" onClick={(e) => e.stopPropagation()}>
               <button onClick={handleMoveClick} className="move-btn">Move to Folder</button>
+              <button onClick={handleRenameOpen} className="rename-btn">Rename</button>
               <button onClick={handleDelete} className="delete-btn">Delete</button>
             </div>
           )}
@@ -272,6 +340,7 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
         {error && <div className="file-error">{error}</div>}
       </div>
       {moveDialog}
+      {renameModal}
     </>
   );
 }

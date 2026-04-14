@@ -1006,3 +1006,84 @@
   font-size: 11px;
   color: #999;
 }
+
+
+
+/* Rename Input */
+.rename-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.rename-input:focus {
+  border-color: #0066cc;
+  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.15);
+  background: #fff;
+}
+
+/* Rename Actions */
+.rename-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* Buttons (reuse patterns but refine) */
+.rename-btn {
+  padding: 8px 14px;
+  border: none;
+  background: #0066cc;
+  color: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.15s;
+}
+
+.rename-btn:hover {
+  background: #0052a3;
+}
+
+.cancel-btn {
+  padding: 8px 14px;
+  border: none;
+  background: #e0e0e0;
+  color: #444;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.15s;
+}
+
+.cancel-btn:hover {
+  background: #d5d5d5;
+}
+
+/* Improve dialog spacing specifically for rename */
+.move-dialog-body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Optional: subtle animation */
+.move-dialog {
+  animation: dialogFadeIn 0.18s ease;
+}
+
+@keyframes dialogFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
