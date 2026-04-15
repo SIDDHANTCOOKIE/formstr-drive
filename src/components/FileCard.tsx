@@ -264,7 +264,7 @@ export function FileCard({
         )}
         <div className={`file-tile ${showMenu ? "menu-open" : ""} ${selected ? "selected" : ""}`}>
           {/* Preview area */}
-          <div className="file-tile-preview">
+          <div className={`file-tile-preview ${showMenu ? "menu-open" : ""}`}>
             {selectionControl}
             {hasPreview ? (
               <img src={preview} alt={file.name} className="file-tile-img" />
@@ -299,6 +299,7 @@ export function FileCard({
               >
                 ⋮
               </button>
+
               {showMenu && (
                 <div className="file-menu tile-menu" onClick={(e) => e.stopPropagation()}>
                   <button onClick={handleMoveClick} className="move-btn">Move to Folder</button>
