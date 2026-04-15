@@ -162,7 +162,7 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
   if (viewMode === "grid") {
     return (
       <>
-        {(showMenu || showGridActions) && (
+        {showMenu && (
           <div
             className="file-menu-backdrop"
             onClick={() => {
@@ -180,7 +180,7 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
           onClick={() => setShowGridActions(true)}
         >
           {/* Preview area */}
-          <div className="file-tile-preview">
+          <div className={`file-tile-preview ${showMenu ? "menu-open" : ""}`}>
             {hasPreview ? (
               <img src={preview} alt={file.name} className="file-tile-img" />
             ) : null}
@@ -208,13 +208,14 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
                 className="tile-action-btn"
                 onClick={(e) => {
                   e.stopPropagation();
-                  setShowMenu(!showMenu);
+                  setShowMenu((prev) => !prev);
                   setShowGridActions(true);
                 }}
                 title="More"
               >
                 ⋮
               </button>
+
               {showMenu && (
                 <div className="file-menu tile-menu" onClick={(e) => e.stopPropagation()}>
                   <button onClick={handleMoveClick} className="move-btn">Move to Folder</button>
