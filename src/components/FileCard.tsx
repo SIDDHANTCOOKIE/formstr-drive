@@ -239,7 +239,7 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
         )}
         <div className={`file-tile ${showMenu ? "menu-open" : ""}`}>
           {/* Preview area */}
-          <div className="file-tile-preview">
+          <div className={`file-tile-preview ${showMenu ? "menu-open" : ""}`}>
             {hasPreview ? (
               <img src={preview} alt={file.name} className="file-tile-img" />
             ) : null}
@@ -273,6 +273,7 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
               >
                 ⋮
               </button>
+
               {showMenu && (
                 <div className="file-menu tile-menu" onClick={(e) => e.stopPropagation()}>
                   <button onClick={handleMoveClick} className="move-btn">Move to Folder</button>
