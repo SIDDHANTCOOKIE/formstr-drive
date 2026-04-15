@@ -227,6 +227,7 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
   if (viewMode === "grid") {
     return (
       <>
+        {/* Backdrop closes both menu and grid-actions */}
         {(showMenu || showGridActions) && (
           <div
             className="file-menu-backdrop"
@@ -244,7 +245,7 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
           }}
           onClick={() => setShowGridActions(true)}
         >
-          {/* Preview area */}
+          {/* Preview area — overflow:hidden lives here, NO menu inside */}
           <div className="file-tile-preview">
             {hasPreview ? (
               <img src={preview} alt={file.name} className="file-tile-img" />
@@ -256,7 +257,7 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
               <span className="file-tile-ext">{icon.toUpperCase()}</span>
             </div>
 
-            {/* Hover overlay */}
+            {/* Hover overlay — buttons only, menu is OUTSIDE this element */}
             <div className={`file-tile-overlay ${showMenu ? "open" : ""}`}>
               <button
                 className="tile-action-btn"
@@ -273,7 +274,7 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
                 className="tile-action-btn"
                 onClick={(e) => {
                   e.stopPropagation();
-                  setShowMenu(!showMenu);
+                  setShowMenu((prev) => !prev);
                   setShowGridActions(true);
                 }}
                 title="More"
@@ -289,6 +290,20 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
               )}
             </div>
           </div>
+
+          {showMenu && (
+            <div
+              className="file-menu tile-menu"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button onClick={handleMoveClick} className="move-btn">
+                Move to Folder
+              </button>
+              <button onClick={handleDelete} className="delete-btn">
+                Delete
+              </button>
+            </div>
+          )}
 
           {/* Footer */}
           <div className="file-tile-footer">

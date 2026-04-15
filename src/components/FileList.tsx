@@ -1,16 +1,50 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useFileIndex } from "../hooks/useFileContext";
 import { FileCard } from "./FileCard";
 import { UploadZone } from "./UploadZone";
 
+function getFolderName(path: string): string {
+  if (path === "/") return "My Drive";
+  const parts = path.split("/").filter(Boolean);
+  return parts[parts.length - 1] || path;
+}
+
+function isDirectChildFolder(parentFolder: string, candidateFolder: string): boolean {
+  if (candidateFolder === "/" || candidateFolder === parentFolder) return false;
+
+  if (parentFolder === "/") {
+    return candidateFolder.split("/").filter(Boolean).length === 1;
+  }
+
+  if (!candidateFolder.startsWith(`${parentFolder}/`)) return false;
+  const relative = candidateFolder.slice(parentFolder.length + 1);
+  return relative.length > 0 && !relative.includes("/");
+}
+
 export function FileList() {
-  const { files, currentFolder, loading } = useFileIndex();
+  const { files, folders, currentFolder, setCurrentFolder, loading } = useFileIndex();
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const isGridView = viewMode === "grid";
 
-  const currentFiles = files
-    .filter((f) => f.folder === currentFolder)
-    .filter((f) => f.name.toLowerCase().includes(searchQuery.toLowerCase()));
+  const currentFolders = useMemo(
+    () =>
+      folders
+        .filter((folder) => isDirectChildFolder(currentFolder, folder))
+        .filter((folder) => getFolderName(folder).toLowerCase().includes(normalizedQuery)),
+    [folders, currentFolder, normalizedQuery]
+  );
+
+  const currentFiles = useMemo(
+    () =>
+      files
+        .filter((f) => f.folder === currentFolder)
+        .filter((f) => f.name.toLowerCase().includes(normalizedQuery)),
+    [files, currentFolder, normalizedQuery]
+  );
+
+  const hasItems = currentFolders.length > 0 || currentFiles.length > 0;
 
   if (loading) {
     return (
@@ -67,15 +101,65 @@ export function FileList() {
         </div>
       </div>
 
-      {currentFiles.length === 0 ? (
+      {!hasItems ? (
         <div className="empty-state">
-          <p>{searchQuery ? "No files match your search" : "No files in this folder"}</p>
-          <p className="empty-hint">{!searchQuery && "Drop files above to upload"}</p>
+          <p>{normalizedQuery ? "No files or folders match your search" : "No files or folders in this folder"}</p>
+          <p className="empty-hint">{!normalizedQuery && "Drop files above to upload"}</p>
         </div>
       ) : (
-        <div className={viewMode === "grid" ? "file-grid" : "file-list-view"}>
+        <div className={isGridView ? "file-grid" : "file-list-view"}>
+          {currentFolders.map((folderPath) =>
+            isGridView ? (
+              <button
+                key={folderPath}
+                type="button"
+                className="folder-tile"
+                onClick={() => setCurrentFolder(folderPath)}
+                title={`Open ${getFolderName(folderPath)}`}
+              >
+                <div className="folder-tile-preview">
+                  <svg className="folder-tile-icon" viewBox="0 0 24 16" fill="none" aria-hidden="true">
+                    <path
+                      d="M2 2.5C2 1.67 2.67 1 3.5 1H8.7C9.14 1 9.56 1.2 9.84 1.54L11.18 3.2C11.47 3.56 11.9 3.76 12.36 3.76H20.5C21.33 3.76 22 4.43 22 5.26V13.5C22 14.33 21.33 15 20.5 15H3.5C2.67 15 2 14.33 2 13.5V2.5Z"
+                      fill="currentColor"
+                    />
+                  </svg>
+                </div>
+                <div className="folder-tile-footer">
+                  <span className="folder-tile-name" title={getFolderName(folderPath)}>
+                    {getFolderName(folderPath)}
+                  </span>
+                  <span className="folder-tile-meta">Folder</span>
+                </div>
+              </button>
+            ) : (
+              <button
+                key={folderPath}
+                type="button"
+                className="folder-row"
+                onClick={() => setCurrentFolder(folderPath)}
+                title={`Open ${getFolderName(folderPath)}`}
+              >
+                <div className="folder-row-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 16" fill="none">
+                    <path
+                      d="M2 2.5C2 1.67 2.67 1 3.5 1H8.7C9.14 1 9.56 1.2 9.84 1.54L11.18 3.2C11.47 3.56 11.9 3.76 12.36 3.76H20.5C21.33 3.76 22 4.43 22 5.26V13.5C22 14.33 21.33 15 20.5 15H3.5C2.67 15 2 14.33 2 13.5V2.5Z"
+                      fill="currentColor"
+                    />
+                  </svg>
+                </div>
+                <div className="folder-row-info">
+                  <span className="folder-row-name" title={getFolderName(folderPath)}>
+                    {getFolderName(folderPath)}
+                  </span>
+                  <span className="folder-row-meta">Folder</span>
+                </div>
+              </button>
+            )
+          )}
+
           {currentFiles.map((file) => (
-            <FileCard key={file.hash} file={file} viewMode={viewMode}/>
+            <FileCard key={file.hash} file={file} viewMode={viewMode} />
           ))}
         </div>
       )}
