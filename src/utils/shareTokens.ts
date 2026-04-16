@@ -35,6 +35,12 @@ function base64UrlToBytes(value: string): Uint8Array {
   return bytes;
 }
 
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const out = new Uint8Array(bytes.byteLength);
+  out.set(bytes);
+  return out.buffer;
+}
+
 function randomBase64Url(byteLength: number): string {
   const bytes = crypto.getRandomValues(new Uint8Array(byteLength));
   return bytesToBase64Url(bytes);
@@ -82,7 +88,11 @@ export async function encryptSharePayload(
   const key = await secretToAesKey(secret);
   const ivBytes = crypto.getRandomValues(new Uint8Array(12));
   const plaintext = new TextEncoder().encode(JSON.stringify(payload));
-  const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv: ivBytes }, key, plaintext);
+  const encrypted = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv: toArrayBuffer(ivBytes) },
+    key,
+    toArrayBuffer(plaintext)
+  );
 
   return {
     ciphertext: bytesToBase64Url(new Uint8Array(encrypted)),
@@ -97,9 +107,9 @@ export async function decryptSharePayload(
 ): Promise<PublicSharePayload> {
   const key = await secretToAesKey(secret);
   const decrypted = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: base64UrlToBytes(iv) },
+    { name: "AES-GCM", iv: toArrayBuffer(base64UrlToBytes(iv)) },
     key,
-    base64UrlToBytes(ciphertext)
+    toArrayBuffer(base64UrlToBytes(ciphertext))
   );
 
   const json = new TextDecoder().decode(decrypted);
