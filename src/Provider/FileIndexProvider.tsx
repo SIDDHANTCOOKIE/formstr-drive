@@ -133,8 +133,14 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
       const file = files.find((f) => f.hash === hash);
       if (!file) return;
 
-      await deleteFileMetadata(hash, file);
-      setFiles((prev) => prev.filter((f) => f.hash !== hash));
+      try {
+        await deleteFileMetadata(hash, file);
+        setFiles((prev) => prev.filter((f) => f.hash !== hash));
+      } catch (e) {
+        const errorMsg = e instanceof Error ? e.message : "Delete failed";
+        setError(errorMsg);
+        throw e;
+      }
     },
     [files]
   );
@@ -145,8 +151,14 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
       if (!file) return;
 
       const updated: FileMetadata = { ...file, folder: newFolder };
-      await saveFileMetadata(updated);
-      setFiles((prev) => prev.map((f) => (f.hash === hash ? updated : f)));
+      try {
+        await saveFileMetadata(updated);
+        setFiles((prev) => prev.map((f) => (f.hash === hash ? updated : f)));
+      } catch (e) {
+        const errorMsg = e instanceof Error ? e.message : "Move failed";
+        setError(errorMsg);
+        throw e;
+      }
     },
     [files]
   );
@@ -157,8 +169,14 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
       if (!file) return;
 
       const updated: FileMetadata = { ...file, name: newName };
-      await saveFileMetadata(updated);
-      setFiles((prev) => prev.map((f) => (f.hash === hash ? updated : f)));
+      try {
+        await saveFileMetadata(updated);
+        setFiles((prev) => prev.map((f) => (f.hash === hash ? updated : f)));
+      } catch (e) {
+        const errorMsg = e instanceof Error ? e.message : "Rename failed";
+        setError(errorMsg);
+        throw e;
+      }
     },
     [files]
   );
