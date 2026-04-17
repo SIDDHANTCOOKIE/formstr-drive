@@ -109,6 +109,7 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
 
   const handleDelete = async () => {
     if (confirm(`Delete "${file.name}"?`)) {
+      setError(null);
       try {
         await deleteFile(file.hash);
       } catch (e) {
