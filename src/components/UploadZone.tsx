@@ -3,7 +3,7 @@ import { useFileIndex } from "../hooks/useFileContext";
 import { useBlossomServer } from "../hooks/useBlossomServer";
 
 export function UploadZone() {
-  const { uploadFile } = useFileIndex();
+  const { uploadFile, uploadProgress } = useFileIndex();
   const { servers, selectedServer, setSelectedServer, addCustomServer } = useBlossomServer();
   const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -16,15 +16,21 @@ export function UploadZone() {
     async (files: FileList) => {
       setError(null);
       setUploading(true);
-      try {
-        for (const file of Array.from(files)) {
+      const fileArray = Array.from(files);
+      const errors: string[] = [];
+
+      for (const file of fileArray) {
+        try {
           await uploadFile(file, selectedServer);
+        } catch (e) {
+          errors.push(`${file.name}: ${e instanceof Error ? e.message : "Upload failed"}`);
         }
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Upload failed");
-      } finally {
-        setUploading(false);
       }
+
+      if (errors.length > 0) {
+        setError(errors.join("\n"));
+      }
+      setUploading(false);
     },
     [uploadFile, selectedServer]
   );
@@ -85,7 +91,11 @@ export function UploadZone() {
           style={{ display: "none" }}
         />
         {uploading ? (
-          <span className="upload-status">Uploading...</span>
+          <span className="upload-status">
+            {uploadProgress
+              ? `${uploadProgress.fileName} — ${uploadProgress.stage}`
+              : "Uploading..."}
+          </span>
         ) : (
           <span className="upload-prompt">
             Drop files here or click to upload

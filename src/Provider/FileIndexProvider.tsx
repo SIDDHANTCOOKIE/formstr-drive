@@ -19,6 +19,12 @@ import { useProfileContext } from "../hooks/useProfileContext";
 import { previewFile } from "../services/Preview/previewManager";
 
 const CUSTOM_FOLDERS_KEY = "formstr-drive-custom-folders";
+const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500 MB
+
+export interface UploadProgress {
+  fileName: string;
+  stage: string;
+}
 
 export interface FileIndexContextType {
   files: FileMetadata[];
@@ -29,6 +35,7 @@ export interface FileIndexContextType {
   setCurrentFolder: (folder: string) => void;
   loading: boolean;
   error: string | null;
+  uploadProgress: UploadProgress | null;
   uploadFile: (file: File, server: string) => Promise<void>;
   deleteFile: (hash: string) => Promise<void>;
   moveFile: (hash: string, newFolder: string) => Promise<void>;
@@ -45,6 +52,7 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
   const [currentFolder, setCurrentFolder] = useState("/");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [customFolders, setCustomFolders] = useState<string[]>(() => {
     const stored = localStorage.getItem(CUSTOM_FOLDERS_KEY);
     return stored ? JSON.parse(stored) : [];
@@ -90,10 +98,21 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
   const uploadFile = useCallback(
     async (file: File, server: string) => {
       setError(null);
+
+      if (file.size > MAX_FILE_SIZE) {
+        const msg = `"${file.name}" exceeds the 500 MB limit (${(file.size / (1024 * 1024)).toFixed(1)} MB)`;
+        setError(msg);
+        throw new Error(msg);
+      }
+
       try {
+        setUploadProgress({ fileName: file.name, stage: "Reading file..." });
         const bytes = new Uint8Array(await file.arrayBuffer());
+
+        setUploadProgress({ fileName: file.name, stage: "Encrypting..." });
         const { ciphertext, privateKeyHex } = await encryptFileWithKey(bytes);
 
+        setUploadProgress({ fileName: file.name, stage: "Uploading..." });
         const client = new BlossomClient(server);
         const auth = await createAuthEvent("upload", `Upload ${file.name}`);
         const hash = await client.upload(new TextEncoder().encode(ciphertext), auth);
@@ -101,10 +120,13 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
         let previewHash: string | undefined = undefined;
         const preview = await previewFile(file);
         if (preview) {
+          setUploadProgress({ fileName: file.name, stage: "Uploading preview..." });
           const encrypted = await encryptFile(preview);
           const previewAuth = await createAuthEvent("upload", "Upload preview image");
           previewHash = await client.upload(new TextEncoder().encode(encrypted), previewAuth);
         }
+
+        setUploadProgress({ fileName: file.name, stage: "Saving metadata..." });
         const metadata: FileMetadata = {
           name: file.name,
           hash,
@@ -123,6 +145,8 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
         const errorMsg = e instanceof Error ? e.message : "Upload failed";
         setError(errorMsg);
         throw e;
+      } finally {
+        setUploadProgress(null);
       }
     },
     [currentFolder]
@@ -174,6 +198,7 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
         setCurrentFolder,
         loading,
         error,
+        uploadProgress,
         uploadFile,
         deleteFile,
         moveFile,
