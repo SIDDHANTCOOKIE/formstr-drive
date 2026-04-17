@@ -1,14 +1,11 @@
 import { SimplePool, type Filter } from "nostr-tools";
 import type { FileMetadata, NostrEvent } from "../types/metadata";
+import { APP_RELAYS } from "../utils/common";
 
 const METADATA_KIND = 34578;
 const CLIENT_TAG = "formstr-drive";
 
-const RELAYS = [
-  "wss://relay.damus.io",
-  "wss://relay.nostr.band",
-  "wss://nos.lol",
-];
+const RELAYS = APP_RELAYS;
 
 async function getNostr() {
   if (!window.nostr) throw new Error("Nostr signer not found");

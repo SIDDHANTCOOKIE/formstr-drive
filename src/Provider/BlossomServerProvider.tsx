@@ -1,11 +1,8 @@
 import { createContext, useState, useEffect, useCallback, type ReactNode } from "react";
 import { SimplePool } from "nostr-tools";
+import { APP_RELAYS } from "../utils/common";
 
-const PUBLIC_RELAYS = [
-  "wss://relay.damus.io",
-  "wss://relay.nostr.band",
-  "wss://nos.lol",
-];
+const PUBLIC_RELAYS = APP_RELAYS;
 
 const DEFAULT_SERVERS = [
   "https://blossom.primal.net",
