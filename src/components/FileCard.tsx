@@ -4,6 +4,7 @@ import { useFileIndex } from "../hooks/useFileContext";
 import { decryptFile, decryptFileWithKey } from "../crypto";
 import { createAuthEvent } from "../auth";
 import { BlossomClient } from "../blossom";
+import { FilePreviewModal } from "./FilePreviewModal";
 
 interface FileCardProps {
   file: FileMetadata;
@@ -48,6 +49,7 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
   const [showMenu, setShowMenu] = useState(false);
   const [showGridActions, setShowGridActions] = useState(false);
   const [showMoveDialog, setShowMoveDialog] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [previewloaded, setPreviewloaded] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
@@ -198,6 +200,16 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
                 className="tile-action-btn"
                 onClick={(e) => {
                   e.stopPropagation();
+                  setShowPreview(true);
+                }}
+                title="Preview"
+              >
+                V
+              </button>
+              <button
+                className="tile-action-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
                   handleDownload();
                 }}
                 disabled={downloading}
@@ -241,6 +253,7 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
 
           {error && <div className="file-error">{error}</div>}
         </div>
+        {showPreview && <FilePreviewModal file={file} onClose={() => setShowPreview(false)} />}
         {moveDialog}
       </>
     );
@@ -268,6 +281,9 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
           <button className="action-btn" onClick={handleDownload} disabled={downloading} title="Download">
             {downloading ? "..." : "↓"}
           </button>
+          <button className="action-btn" onClick={() => setShowPreview(true)} title="Preview">
+            V
+          </button>
           <button className="action-btn menu-btn" onClick={() => setShowMenu(!showMenu)} title="More">
             ⋮
           </button>
@@ -280,6 +296,7 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
         </div>
         {error && <div className="file-error">{error}</div>}
       </div>
+      {showPreview && <FilePreviewModal file={file} onClose={() => setShowPreview(false)} />}
       {moveDialog}
     </>
   );
