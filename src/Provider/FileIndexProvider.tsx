@@ -95,15 +95,17 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
         const { ciphertext, privateKeyHex } = await encryptFileWithKey(bytes);
 
         const client = new BlossomClient(server);
-        const auth = await createAuthEvent("upload", `Upload ${file.name}`);
-        const hash = await client.upload(new TextEncoder().encode(ciphertext), auth);
+        const encryptedBytes = new TextEncoder().encode(ciphertext);
+        const auth = await createAuthEvent("upload", `Upload ${file.name}`, encryptedBytes);
+        const hash = await client.upload(encryptedBytes, auth);
 
         let previewHash: string | undefined = undefined;
         const preview = await previewFile(file);
         if (preview) {
           const encrypted = await encryptFile(preview);
-          const previewAuth = await createAuthEvent("upload", "Upload preview image");
-          previewHash = await client.upload(new TextEncoder().encode(encrypted), previewAuth);
+          const encryptedPreviewBytes = new TextEncoder().encode(encrypted);
+          const previewAuth = await createAuthEvent("upload", "Upload preview image", encryptedPreviewBytes);
+          previewHash = await client.upload(encryptedPreviewBytes, previewAuth);
         }
         const metadata: FileMetadata = {
           name: file.name,
