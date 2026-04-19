@@ -49,7 +49,7 @@ export const FileDownload: React.FC = () => {
 
     try {
       const client = new BlossomClient(selectedServer);
-      const auth = await createAuthEvent("get", `Get ${sha256}`);
+      const auth = await createAuthEvent("get", `Get ${sha256}`, sha256);
       const blob = await client.download(sha256, auth);
       const ciphertext = new TextDecoder().decode(blob);
       const decrypted = await decryptFileWithKey(ciphertext, privateKey);

@@ -34,7 +34,7 @@ function formatDate(timestamp: number): string {
 async function getPreview(file: FileMetadata): Promise<string> {
   if (!file.previewHash) return "";
   const client = new BlossomClient(file.server);
-  const auth = await createAuthEvent("get", `Get preview ${file.previewHash}`);
+  const auth = await createAuthEvent("get", `Get preview ${file.previewHash}`, file.previewHash);
   const uint8arr = await client.download(file.previewHash, auth);
   const ciphertext = new TextDecoder().decode(uint8arr as Uint8Array<ArrayBuffer>);
   const decrypted = await decryptFile(ciphertext);
@@ -89,7 +89,7 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
     setError(null);
     try {
       const client = new BlossomClient(file.server);
-      const auth = await createAuthEvent("get", `Get ${file.hash}`);
+      const auth = await createAuthEvent("get", `Get ${file.hash}`, file.hash);
       const blob = await client.download(file.hash, auth);
       const ciphertext = new TextDecoder().decode(blob);
       const decrypted = await decryptFileWithKey(ciphertext, file.encryptionKey);
