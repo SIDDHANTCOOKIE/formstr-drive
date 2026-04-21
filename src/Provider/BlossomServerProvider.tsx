@@ -91,6 +91,12 @@ export function BlossomServerProvider({ children }: { children: ReactNode }) {
     }
     normalizedUrl = normalizedUrl.replace(/\/$/, "");
 
+    try {
+      new URL(normalizedUrl);
+    } catch {
+      throw new Error(`"${url}" is not a valid server URL`);
+    }
+
     setServers((prev) => {
       if (prev.some((s) => s.url === normalizedUrl)) {
         return prev;

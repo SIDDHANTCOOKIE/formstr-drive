@@ -6,12 +6,17 @@ export const ServerSelector: React.FC = () => {
     useBlossomServer();
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [customUrl, setCustomUrl] = useState("");
+  const [urlError, setUrlError] = useState<string | null>(null);
 
   const handleAddCustom = () => {
-    if (customUrl.trim()) {
+    if (!customUrl.trim()) return;
+    try {
       addCustomServer(customUrl);
       setCustomUrl("");
+      setUrlError(null);
       setShowCustomInput(false);
+    } catch (e) {
+      setUrlError(e instanceof Error ? e.message : "Invalid server URL");
     }
   };
 
@@ -65,7 +70,10 @@ export const ServerSelector: React.FC = () => {
           <input
             type="text"
             value={customUrl}
-            onChange={(e) => setCustomUrl(e.target.value)}
+            onChange={(e) => {
+              setCustomUrl(e.target.value);
+              setUrlError(null);
+            }}
             onKeyDown={handleKeyDown}
             placeholder="https://your-blossom-server.com"
             autoFocus
@@ -73,6 +81,7 @@ export const ServerSelector: React.FC = () => {
           <button type="button" onClick={handleAddCustom}>
             Add
           </button>
+          {urlError && <p className="error-message">{urlError}</p>}
         </div>
       )}
 
