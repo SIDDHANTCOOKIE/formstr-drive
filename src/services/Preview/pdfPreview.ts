@@ -3,7 +3,16 @@ import pdfjsLib from "./pdfWorker";
 export async function generatePdfThumbnail(file: File): Promise<Uint8Array> {
     const arrayBuffer = await file.arrayBuffer();
 
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    let pdf: Awaited<ReturnType<typeof pdfjsLib.getDocument>["promise"]>;
+    try {
+        pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    } catch {
+        throw new Error(`Failed to parse PDF: ${file.name}`);
+    }
+
+    if (pdf.numPages < 1) {
+        throw new Error(`PDF has no renderable pages: ${file.name}`);
+    }
 
     const page = await pdf.getPage(1);
 
