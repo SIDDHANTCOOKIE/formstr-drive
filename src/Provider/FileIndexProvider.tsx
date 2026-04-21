@@ -19,7 +19,6 @@ import { useProfileContext } from "../hooks/useProfileContext";
 import { previewFile } from "../services/Preview/previewManager";
 
 const CUSTOM_FOLDERS_KEY = "formstr-drive-custom-folders";
-const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500 MB
 
 export interface UploadProgress {
   fileName: string;
@@ -98,12 +97,6 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
   const uploadFile = useCallback(
     async (file: File, server: string) => {
       setError(null);
-
-      if (file.size > MAX_FILE_SIZE) {
-        const msg = `"${file.name}" exceeds the 500 MB limit (${(file.size / (1024 * 1024)).toFixed(1)} MB)`;
-        setError(msg);
-        throw new Error(msg);
-      }
 
       try {
         setUploadProgress({ fileName: file.name, stage: "Reading file..." });
