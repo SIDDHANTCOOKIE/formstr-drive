@@ -47,7 +47,6 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
   const { deleteFile, moveFile, folders, renameFile } = useFileIndex();
   const [downloading, setDownloading] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
-  const [showGridActions, setShowGridActions] = useState(false);
   const [showMoveDialog, setShowMoveDialog] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -232,25 +231,14 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
   if (viewMode === "grid") {
     return (
       <>
-        {/* Backdrop closes both menu and grid-actions */}
-        {(showMenu || showGridActions) && (
+        {showMenu && (
           <div
             className="file-menu-backdrop"
-            onClick={() => {
-              setShowMenu(false);
-              setShowGridActions(false);
-            }}
+            onClick={() => setShowMenu(false)}
           />
         )}
-        <div
-          className={`file-tile ${showGridActions ? "active" : ""}`}
-          onMouseEnter={() => setShowGridActions(true)}
-          onMouseLeave={() => {
-            if (!showMenu) setShowGridActions(false);
-          }}
-          onClick={() => setShowGridActions(true)}
-        >
-          {/* Preview area — overflow:hidden lives here, NO menu inside */}
+        <div className={`file-tile ${showMenu ? "menu-open" : ""}`}>
+          {/* Preview area */}
           <div className="file-tile-preview">
             {hasPreview ? (
               <img src={preview} alt={file.name} className="file-tile-img" />
@@ -262,8 +250,8 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
               <span className="file-tile-ext">{icon.toUpperCase()}</span>
             </div>
 
-            {/* Hover overlay — buttons only, menu is OUTSIDE this element */}
-            <div className={`file-tile-overlay ${showMenu ? "open" : ""}`}>
+            {/* Hover overlay — pure CSS, no JS hover tracking */}
+            <div className="file-tile-overlay">
               <button
                 className="tile-action-btn"
                 onClick={(e) => {
@@ -280,7 +268,6 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
                 onClick={(e) => {
                   e.stopPropagation();
                   setShowMenu((prev) => !prev);
-                  setShowGridActions(true);
                 }}
                 title="More"
               >
@@ -324,7 +311,7 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
     );
   }
 
-
+  // List view
   return (
     <>
       {showMenu && <div className="file-menu-backdrop" onClick={() => setShowMenu(false)} />}
