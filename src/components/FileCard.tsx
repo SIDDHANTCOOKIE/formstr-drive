@@ -284,20 +284,6 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
             </div>
           </div>
 
-          {showMenu && (
-            <div
-              className="file-menu tile-menu"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <button onClick={handleMoveClick} className="move-btn">
-                Move to Folder
-              </button>
-              <button onClick={handleDelete} className="delete-btn">
-                Delete
-              </button>
-            </div>
-          )}
-
           {/* Footer */}
           <div className="file-tile-footer">
             <span className="file-tile-name" title={file.name}>{file.name}</span>

@@ -983,7 +983,7 @@
 .tile-menu {
   top: calc(100% + 8px);
   bottom: auto;
-  right: -14px;
+  right: -18px;
   margin: 0;
   z-index: 60;
 }
