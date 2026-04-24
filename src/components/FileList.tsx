@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useFileIndex } from "../hooks/useFileContext";
 import { FileCard } from "./FileCard";
 import { UploadZone } from "./UploadZone";
@@ -22,9 +22,21 @@ function isDirectChildFolder(parentFolder: string, candidateFolder: string): boo
 }
 
 export function FileList() {
-  const { files, folders, currentFolder, setCurrentFolder, loading } = useFileIndex();
+  const {
+    files,
+    folders,
+    currentFolder,
+    setCurrentFolder,
+    loading,
+    deleteFiles,
+    moveFiles,
+  } = useFileIndex();
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [selectedFileHashes, setSelectedFileHashes] = useState<Set<string>>(new Set());
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const [bulkAction, setBulkAction] = useState<"move" | "delete" | null>(null);
+  const [showMoveDialog, setShowMoveDialog] = useState(false);
   const normalizedQuery = searchQuery.trim().toLowerCase();
   const isGridView = viewMode === "grid";
 
@@ -43,8 +55,134 @@ export function FileList() {
         .filter((f) => f.name.toLowerCase().includes(normalizedQuery)),
     [files, currentFolder, normalizedQuery]
   );
+  const currentFileHashes = useMemo(
+    () => new Set(currentFiles.map((file) => file.hash)),
+    [currentFiles]
+  );
+  const selectedFiles = useMemo(
+    () => currentFiles.filter((file) => selectedFileHashes.has(file.hash)),
+    [currentFiles, selectedFileHashes]
+  );
+  const selectedCount = selectedFiles.length;
+  const allVisibleSelected = currentFiles.length > 0 && selectedCount === currentFiles.length;
 
   const hasItems = currentFolders.length > 0 || currentFiles.length > 0;
+
+  useEffect(() => {
+    setSelectedFileHashes((prev) => {
+      const next = new Set(
+        Array.from(prev).filter((hash) => currentFileHashes.has(hash))
+      );
+
+      if (next.size === prev.size) {
+        return prev;
+      }
+
+      return next;
+    });
+  }, [currentFileHashes]);
+
+  const toggleFileSelection = (hash: string) => {
+    setBulkError(null);
+    setSelectedFileHashes((prev) => {
+      const next = new Set(prev);
+      if (next.has(hash)) {
+        next.delete(hash);
+      } else {
+        next.add(hash);
+      }
+      return next;
+    });
+  };
+
+  const handleToggleSelectAll = () => {
+    setBulkError(null);
+    setSelectedFileHashes(() => {
+      if (allVisibleSelected) {
+        return new Set();
+      }
+      return new Set(currentFiles.map((file) => file.hash));
+    });
+  };
+
+  const handleClearSelection = () => {
+    setBulkError(null);
+    setSelectedFileHashes(new Set());
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedCount === 0) return;
+
+    const confirmed = confirm(
+      selectedCount === 1
+        ? `Delete "${selectedFiles[0].name}"?`
+        : `Delete ${selectedCount} files? Your signer may ask you to approve each deletion.`
+    );
+
+    if (!confirmed) return;
+
+    setBulkAction("delete");
+    setBulkError(null);
+
+    try {
+      await deleteFiles(selectedFiles.map((file) => file.hash));
+      setSelectedFileHashes(new Set());
+    } catch (e) {
+      setBulkError(e instanceof Error ? e.message : "Bulk delete failed");
+    } finally {
+      setBulkAction(null);
+    }
+  };
+
+  const handleBulkMove = async (folder: string) => {
+    if (selectedCount === 0) return;
+
+    setBulkAction("move");
+    setBulkError(null);
+
+    try {
+      await moveFiles(selectedFiles.map((file) => file.hash), folder);
+      setSelectedFileHashes(new Set());
+      setShowMoveDialog(false);
+    } catch (e) {
+      setBulkError(e instanceof Error ? e.message : "Bulk move failed");
+    } finally {
+      setBulkAction(null);
+    }
+  };
+
+  const bulkMoveDialog = showMoveDialog && (
+    <div className="move-dialog-overlay" onClick={() => setShowMoveDialog(false)}>
+      <div className="move-dialog" onClick={(e) => e.stopPropagation()}>
+        <div className="move-dialog-header">
+          <h3>Move {selectedCount} Files</h3>
+          <button onClick={() => setShowMoveDialog(false)}>×</button>
+        </div>
+        <div className="move-dialog-body">
+          <p className="bulk-action-hint">
+            Selected files will be updated one by one. Your signer may ask for
+            multiple approvals.
+          </p>
+          <div className="folder-list-move">
+            {folders.map((folder) => (
+              <button
+                key={folder}
+                className={`folder-option ${folder === currentFolder ? "current" : ""}`}
+                onClick={() => handleBulkMove(folder)}
+                disabled={folder === currentFolder || bulkAction === "move"}
+              >
+                <span className="folder-icon">📁</span>
+                <span className="folder-path">{folder}</span>
+                {folder === currentFolder && (
+                  <span className="current-badge">Current</span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 
   if (loading) {
     return (
@@ -58,6 +196,44 @@ export function FileList() {
   return (
     <div className="file-list-container">
       <UploadZone />
+
+      <div className="bulk-action-bar">
+        <div className="bulk-action-summary">
+          <strong>{selectedCount}</strong> file{selectedCount === 1 ? "" : "s"} selected
+        </div>
+        <div className="bulk-action-buttons">
+          <button
+            className="bulk-secondary-btn"
+            onClick={handleToggleSelectAll}
+            disabled={bulkAction !== null || currentFiles.length === 0}
+          >
+            {allVisibleSelected ? "Deselect all" : "Select all"}
+          </button>
+          <button
+            className="bulk-secondary-btn"
+            onClick={() => setShowMoveDialog(true)}
+            disabled={bulkAction !== null || selectedCount === 0}
+          >
+            {bulkAction === "move" ? "Moving..." : "Move selected"}
+          </button>
+          <button
+            className="bulk-danger-btn"
+            onClick={handleBulkDelete}
+            disabled={bulkAction !== null || selectedCount === 0}
+          >
+            {bulkAction === "delete" ? "Deleting..." : "Delete selected"}
+          </button>
+          <button
+            className="bulk-clear-btn"
+            onClick={handleClearSelection}
+            disabled={bulkAction !== null || selectedCount === 0}
+          >
+            Clear
+          </button>
+        </div>
+      </div>
+
+      {bulkError && <div className="bulk-action-error">{bulkError}</div>}
 
       <div className="file-list-toolbar">
         <div className="search-wrap">
@@ -159,10 +335,17 @@ export function FileList() {
           )}
 
           {currentFiles.map((file) => (
-            <FileCard key={file.hash} file={file} viewMode={viewMode} />
+            <FileCard
+              key={file.hash}
+              file={file}
+              viewMode={viewMode}
+              selected={selectedFileHashes.has(file.hash)}
+              onToggleSelection={toggleFileSelection}
+            />
           ))}
         </div>
       )}
+      {bulkMoveDialog}
     </div>
   );
 }

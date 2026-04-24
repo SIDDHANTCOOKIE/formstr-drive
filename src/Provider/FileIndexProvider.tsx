@@ -31,7 +31,9 @@ export interface FileIndexContextType {
   error: string | null;
   uploadFile: (file: File, server: string) => Promise<void>;
   deleteFile: (hash: string) => Promise<void>;
+  deleteFiles: (hashes: string[]) => Promise<void>;
   moveFile: (hash: string, newFolder: string) => Promise<void>;
+  moveFiles: (hashes: string[], newFolder: string) => Promise<void>;
   renameFile: (hash: string, newName: string) => Promise<void>;
   refresh: () => Promise<void>;
 }
@@ -141,6 +143,20 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
     [files]
   );
 
+  const deleteFiles = useCallback(
+    async (hashes: string[]) => {
+      const hashSet = new Set(hashes);
+      const targetFiles = files.filter((file) => hashSet.has(file.hash));
+
+      for (const file of targetFiles) {
+        await deleteFileMetadata(file.hash, file);
+      }
+
+      setFiles((prev) => prev.filter((file) => !hashSet.has(file.hash)));
+    },
+    [files]
+  );
+
   const moveFile = useCallback(
     async (hash: string, newFolder: string) => {
       const file = files.find((f) => f.hash === hash);
@@ -149,6 +165,25 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
       const updated: FileMetadata = { ...file, folder: newFolder };
       await saveFileMetadata(updated);
       setFiles((prev) => prev.map((f) => (f.hash === hash ? updated : f)));
+    },
+    [files]
+  );
+
+  const moveFiles = useCallback(
+    async (hashes: string[], newFolder: string) => {
+      const hashSet = new Set(hashes);
+      const targetFiles = files.filter((file) => hashSet.has(file.hash));
+
+      for (const file of targetFiles) {
+        const updated: FileMetadata = { ...file, folder: newFolder };
+        await saveFileMetadata(updated);
+      }
+
+      setFiles((prev) =>
+        prev.map((file) =>
+          hashSet.has(file.hash) ? { ...file, folder: newFolder } : file
+        )
+      );
     },
     [files]
   );
@@ -178,7 +213,9 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
         error,
         uploadFile,
         deleteFile,
+        deleteFiles,
         moveFile,
+        moveFiles,
         renameFile,
         refresh,
       }}
