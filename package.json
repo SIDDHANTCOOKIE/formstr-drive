@@ -8,10 +8,15 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "android:copy": "pnpm build && pnpm exec cap copy android",
+    "android:sync": "pnpm build && pnpm exec cap sync android",
+    "android:open": "pnpm exec cap open android"
   },
   "dependencies": {
     "@ant-design/icons": "^6.1.1",
+    "@capacitor/android": "^8.3.1",
+    "@capacitor/core": "^8.3.1",
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
     "antd": "^6.3.3",
@@ -22,6 +27,7 @@
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.3.1",
     "@eslint/js": "^9.39.1",
     "@types/node": "^24.10.9",
     "@types/react": "^19.2.5",

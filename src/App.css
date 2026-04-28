@@ -702,6 +702,12 @@
   background: #333;
 }
 
+.sign-in-btn-large:disabled {
+  background: #cfd5df;
+  color: #4d5868;
+  cursor: not-allowed;
+}
+
 .sign-in-btn {
   padding: 8px 16px;
   font-size: 14px;
