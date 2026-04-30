@@ -1,5 +1,6 @@
 import { createContext, useState, useEffect, useCallback, type ReactNode } from "react";
 import { SimplePool } from "nostr-tools";
+import { getStoredItem, setStoredItem, STORAGE_KEYS } from "../utils/persistence";
 import { APP_RELAYS } from "../utils/common";
 
 const PUBLIC_RELAYS = APP_RELAYS;
@@ -26,6 +27,15 @@ export interface BlossomServerContextType {
 
 export const BlossomServerContext = createContext<BlossomServerContextType | null>(null);
 
+function normalizeServerUrl(url: string) {
+  let normalizedUrl = url.trim();
+  if (!normalizedUrl.startsWith("http://") && !normalizedUrl.startsWith("https://")) {
+    normalizedUrl = "https://" + normalizedUrl;
+  }
+
+  return normalizedUrl.replace(/\/$/, "");
+}
+
 export function BlossomServerProvider({ children }: { children: ReactNode }) {
   const [servers, setServers] = useState<ServerInfo[]>(
     DEFAULT_SERVERS.map((url) => ({ url, source: "default" }))
@@ -33,19 +43,59 @@ export function BlossomServerProvider({ children }: { children: ReactNode }) {
   const [selectedServer, setSelectedServer] = useState(DEFAULT_SERVERS[0]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
 
   useEffect(() => {
     const pool = new SimplePool();
+    let cancelled = false;
 
     const queryServers = async () => {
       try {
+        const storedCustomServers = await getStoredItem<string[]>(
+          STORAGE_KEYS.CUSTOM_SERVERS,
+          [],
+        );
+        const storedSelectedServer = normalizeServerUrl(
+          await getStoredItem<string>(
+            STORAGE_KEYS.SELECTED_SERVER,
+            DEFAULT_SERVERS[0],
+          ),
+        );
+
+        const customServers = storedCustomServers.map((url) => ({
+          url: normalizeServerUrl(url),
+          source: "custom" as const,
+        }));
+        const ensuredCustomServers = customServers.some(
+          (server) => server.url === storedSelectedServer,
+        )
+          ? customServers
+          : DEFAULT_SERVERS.includes(storedSelectedServer)
+            ? customServers
+            : [
+                ...customServers,
+                { url: storedSelectedServer, source: "custom" as const },
+              ];
+
+        if (!cancelled) {
+          setServers([
+            ...DEFAULT_SERVERS.map((url) => ({ url, source: "default" as const })),
+            ...ensuredCustomServers,
+          ]);
+          setSelectedServer(storedSelectedServer);
+          setSettingsLoaded(true);
+        }
+
         const events = await pool.querySync(PUBLIC_RELAYS, {
           kinds: [36363],
           limit: 50,
         });
 
         const relayServers: ServerInfo[] = [];
-        const seenUrls = new Set(DEFAULT_SERVERS);
+        const seenUrls = new Set([
+          ...DEFAULT_SERVERS,
+          ...ensuredCustomServers.map((server) => server.url),
+        ]);
 
         for (const event of events) {
           const dTag = event.tags.find((t) => t[0] === "d");
@@ -65,28 +115,35 @@ export function BlossomServerProvider({ children }: { children: ReactNode }) {
           }
         }
 
-        setServers((prev) => [
-          ...prev.filter((s) => s.source !== "relay"),
-          ...relayServers,
-        ]);
+        if (!cancelled) {
+          setServers((prev) => [
+            ...prev.filter((s) => s.source !== "relay"),
+            ...relayServers,
+          ]);
+        }
       } catch (e) {
         console.error("Failed to query relay servers:", e);
-        setError("Failed to fetch servers from relays");
+        if (!cancelled) {
+          setError("Failed to fetch servers from relays");
+          setSettingsLoaded(true);
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
         pool.close(PUBLIC_RELAYS);
       }
     };
 
-    queryServers();
+    void queryServers();
+    return () => {
+      cancelled = true;
+      pool.close(PUBLIC_RELAYS);
+    };
   }, []);
 
   const addCustomServer = useCallback((url: string) => {
-    let normalizedUrl = url.trim();
-    if (!normalizedUrl.startsWith("http://") && !normalizedUrl.startsWith("https://")) {
-      normalizedUrl = "https://" + normalizedUrl;
-    }
-    normalizedUrl = normalizedUrl.replace(/\/$/, "");
+    const normalizedUrl = normalizeServerUrl(url);
 
     setServers((prev) => {
       if (prev.some((s) => s.url === normalizedUrl)) {
@@ -96,6 +153,21 @@ export function BlossomServerProvider({ children }: { children: ReactNode }) {
     });
     setSelectedServer(normalizedUrl);
   }, []);
+
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    void setStoredItem(STORAGE_KEYS.SELECTED_SERVER, selectedServer);
+  }, [selectedServer, settingsLoaded]);
+
+  useEffect(() => {
+    if (!settingsLoaded) return;
+
+    const customServerUrls = servers
+      .filter((server) => server.source === "custom")
+      .map((server) => server.url);
+
+    void setStoredItem(STORAGE_KEYS.CUSTOM_SERVERS, customServerUrls);
+  }, [servers, settingsLoaded]);
 
   return (
     <BlossomServerContext.Provider

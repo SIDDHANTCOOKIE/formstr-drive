@@ -10,8 +10,16 @@ import { SignIn } from "./components/SignIn/SignIn";
 import "./App.css";
 
 function DriveLayout() {
-  const { isSignedIn } = useProfileContext();
+  const { isSignedIn, restoring } = useProfileContext();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  if (restoring) {
+    return (
+      <div className="loading-container">
+        <div className="loading-state">Restoring session...</div>
+      </div>
+    );
+  }
 
   if (!isSignedIn) {
     return <SignIn />;

@@ -664,42 +664,63 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 85vh;
-  background: #fff;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 24px;
+  background:
+    radial-gradient(circle at top, rgba(255,255,255,0.92), rgba(236,236,236,0.94)),
+    linear-gradient(180deg, #cfcfcf 0%, #a9a9a9 100%);
+  box-sizing: border-box;
 }
 
 .sign-in-card {
   text-align: center;
-  padding: 48px;
+  padding: 34px 36px 40px;
+  width: min(100%, 560px);
+  box-sizing: border-box;
+  background: rgba(255,255,255,0.98);
+  border-radius: 14px;
+  box-shadow: 0 28px 70px rgba(0,0,0,0.2);
+  border: 1px solid rgba(255,255,255,0.6);
+  backdrop-filter: blur(10px);
 }
 
 .sign-in-card h1 {
-  font-size: 32px;
+  font-size: clamp(34px, 4vw, 48px);
+  line-height: 1.08;
   font-weight: 500;
-  margin: 0 0 8px;
-}
-.sign-in-card h1 span {
-  font-weight: 1000;
+  margin: 0 0 10px;
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Menlo", monospace;
+  letter-spacing: -0.04em;
+  color: #111;
 }
 
-.sign-in-card p {
+.sign-in-subtitle {
   color: #666;
-  margin: 0 0 12px;
+  margin: 0 0 26px;
+  font-size: 16px;
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Menlo", monospace;
+  letter-spacing: -0.02em;
 }
 
 .sign-in-btn-large {
-  padding: 14px 32px;
-  font-size: 16px;
-  font-weight: 500;
+  width: 100%;
+  padding: 16px 28px;
+  font-size: 17px;
+  font-weight: 600;
   border: none;
-  background: #111;
+  background: #080808;
   color: #fff;
-  border-radius: 6px;
+  border-radius: 10px;
   cursor: pointer;
+  box-shadow: 0 10px 18px rgba(0,0,0,0.12);
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Menlo", monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .sign-in-btn-large:hover {
-  background: #333;
+  background: #1b1b1b;
 }
 
 .sign-in-btn-large:disabled {
@@ -708,30 +729,413 @@
   cursor: not-allowed;
 }
 
-.sign-in-btn {
-  padding: 8px 16px;
-  font-size: 14px;
+.native-signer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+
+.sign-in-primary-actions {
+  margin-bottom: 4px;
+}
+
+.sign-in-choice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.sign-in-choice-btn {
+  width: 100%;
+  padding: 18px 22px;
+  border: 1px solid #cfcfcf;
+  border-radius: 10px;
+  background: #fff;
+  color: #111;
+  cursor: pointer;
+  font-size: 16px;
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Menlo", monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.sign-in-choice-btn:hover {
+  background: #f8f8f8;
+  border-color: #111;
+  transform: translateY(-1px);
+}
+
+.sign-in-choice-btn-primary {
   border: none;
-  background: #111;
+  background: #080808;
   color: #fff;
-  border-radius: 4px;
+  box-shadow: 0 10px 18px rgba(0,0,0,0.12);
+}
+
+.sign-in-choice-btn-primary:hover {
+  background: #1b1b1b;
+}
+
+.sign-in-back-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0 0 18px;
+  color: #555;
+  font-size: 13px;
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Menlo", monospace;
   cursor: pointer;
 }
 
+.sign-in-back-btn:hover {
+  color: #111;
+}
+
+.sign-in-method-section {
+  margin-top: 10px;
+  text-align: left;
+}
+
+.sign-in-method-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.sign-in-method-header h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #111;
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Menlo", monospace;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.sign-in-secondary-section .sign-in-method-header {
+  justify-content: flex-start;
+}
+
+.sign-in-section-hint {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: #777;
+  line-height: 1.5;
+}
+
+.sign-in-remote-header {
+  display: grid;
+  grid-template-columns: 32px 1fr;
+  gap: 14px;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 22px;
+}
+
+.sign-in-remote-icon {
+  width: 32px;
+  height: 32px;
+  color: #111;
+}
+
+.sign-in-remote-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.sign-in-remote-copy {
+  text-align: center;
+}
+
+.sign-in-remote-copy h2 {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.35;
+  font-weight: 600;
+  color: #111;
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Menlo", monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.sign-in-remote-copy p {
+  margin: 6px 0 0;
+  font-size: 14px;
+  color: #222;
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Menlo", monospace;
+}
+
+.sign-in-tab-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid #e3e3e3;
+}
+
+.sign-in-tab-btn {
+  position: relative;
+  border: none;
+  background: none;
+  padding: 0 2px 12px;
+  color: #7d7d7d;
+  font-size: 14px;
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Menlo", monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.sign-in-tab-btn.active {
+  color: #111;
+}
+
+.sign-in-tab-btn.active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 3px;
+  background: #111;
+  border-radius: 999px;
+}
+
+.sign-in-tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sign-in-warning-box {
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: #fff7e8;
+  color: #6e4b07;
+  font-size: 13px;
+  line-height: 1.5;
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Menlo", monospace;
+  border: 1px solid #f0d498;
+}
+
+.sign-in-warning-box code {
+  font-weight: 700;
+  color: #513400;
+}
+
+.sign-in-secret-output {
+  width: 100%;
+  min-height: 108px;
+  padding: 16px 18px;
+  border: 1px solid #d0d0d0;
+  border-radius: 10px;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #111;
+  background: #fff;
+  resize: vertical;
+  box-sizing: border-box;
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Menlo", monospace;
+}
+
+.sign-in-generated-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.sign-in-generated-actions .sign-in-choice-btn {
+  flex: 1;
+}
+
+.sign-in-input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sign-in-input-column {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sign-in-text-input {
+  width: 100%;
+  min-width: 0;
+  padding: 18px 18px;
+  border: 1px solid #d0d0d0;
+  border-radius: 10px;
+  font-size: 17px;
+  background: #fff;
+  color: #111;
+  outline: none;
+  box-sizing: border-box;
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Menlo", monospace;
+}
+
+.sign-in-text-input:focus {
+  border-color: #111;
+  box-shadow: 0 0 0 3px rgba(17,17,17,0.08);
+}
+
+.sign-in-text-input:disabled {
+  background: #f5f5f5;
+  color: #888;
+}
+
+.sign-in-link-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  color: #111;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Menlo", monospace;
+  cursor: pointer;
+}
+
+.sign-in-link-btn:disabled {
+  color: #999;
+  cursor: not-allowed;
+}
+
+.sign-in-qr-panel {
+  padding: 18px;
+  border: 1px solid #e0e0e0;
+  border-radius: 12px;
+  background: #fafafa;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.sign-in-qr-placeholder {
+  width: 176px;
+  height: 176px;
+  border-radius: 12px;
+  background: repeating-linear-gradient(
+    45deg,
+    #f1f1f1,
+    #f1f1f1 12px,
+    #ebebeb 12px,
+    #ebebeb 24px
+  );
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #777;
+  font-size: 14px;
+  text-align: center;
+  padding: 16px;
+  box-sizing: border-box;
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Menlo", monospace;
+}
+
+.sign-in-qr-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: #777;
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Menlo", monospace;
+}
+
+.native-signer-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  padding: 16px 18px;
+  border: none;
+  border-radius: 10px;
+  background: #080808;
+  color: #fff;
+  cursor: pointer;
+  font-size: 17px;
+  font-weight: 600;
+  box-shadow: 0 10px 18px rgba(0,0,0,0.12);
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Menlo", monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.native-signer-btn:hover {
+  background: #1b1b1b;
+}
+
+.native-signer-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.native-signer-icon,
+.native-signer-fallback {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.native-signer-icon {
+  object-fit: cover;
+}
+
+.native-signer-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  color: #111;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.sign-in-btn {
+  padding: 16px 22px;
+  font-size: 15px;
+  border: none;
+  background: #080808;
+  color: #fff;
+  border-radius: 10px;
+  cursor: pointer;
+  box-shadow: 0 10px 18px rgba(0,0,0,0.12);
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Menlo", monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .sign-in-btn:hover {
-  background: #333;
+  background: #1b1b1b;
+}
+
+.sign-in-btn-block {
+  width: 100%;
 }
 
 .sign-in-hint {
-  padding-top: 8px;
-  margin-top: 16px;
+  padding-top: 4px;
+  margin-top: 18px;
   font-size: 13px;
-  color: #999;
+  color: #777;
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Menlo", monospace;
 }
 
 .sign-in-error {
-  margin-top: 16px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #fff2f2;
   color: #c00;
+  text-align: left;
+  font-size: 13px;
+  line-height: 1.45;
+  font-family: "IBM Plex Mono", "SFMono-Regular", "Menlo", monospace;
 }
 
 /* Mobile: hidden drawer by default */
@@ -756,6 +1160,43 @@
     inset: 0;
     background: rgba(0, 0, 0, 0.4);
     z-index: 199;
+  }
+
+  .sign-in-card {
+    padding: 26px 18px 30px;
+    border-radius: 12px;
+  }
+
+  .sign-in-choice-btn {
+    font-size: 14px;
+    padding: 16px 18px;
+  }
+
+  .sign-in-generated-actions {
+    flex-direction: column;
+  }
+
+  .sign-in-input-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .sign-in-input-row .sign-in-btn,
+  .sign-in-input-column .sign-in-btn {
+    width: 100%;
+  }
+
+  .sign-in-qr-actions {
+    flex-direction: column;
+    text-align: center;
+    gap: 6px;
+  }
+
+  .sign-in-remote-header {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    text-align: center;
+    gap: 10px;
   }
 }
 

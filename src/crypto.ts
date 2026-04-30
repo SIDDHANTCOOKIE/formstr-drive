@@ -1,18 +1,6 @@
 import { nip44, generateSecretKey, getPublicKey } from "nostr-tools";
 import { bytesToHex, hexToBytes } from "nostr-tools/utils";
-
-declare global {
-  interface Window {
-    nostr?: {
-      nip44: {
-        encrypt: (pubkey: string, text: string) => Promise<string>;
-        decrypt: (params: { pubkey: string; ciphertext: string }) => Promise<string>;
-      };
-      getPublicKey: () => Promise<string>;
-      signEvent: (event: object) => Promise<object>;
-    };
-  }
-}
+import { signerManager } from "./signer/manager";
 
 /**
  * Convert Uint8Array to Base64 string
@@ -237,10 +225,14 @@ export async function decryptFileWithKey(ciphertext: string, privateKeyHex: stri
  * DEPRECATED: Use encryptFileWithKey instead
  */
 export async function encryptFile(fileBytes: Uint8Array): Promise<string> {
-  if (!window.nostr) throw new Error("Nostr signer not found");
-  const pubkey = await window.nostr.getPublicKey();
+  const signer = await signerManager.getSigner();
+  if (!signer.nip44Encrypt) {
+    throw new Error("Signer does not support NIP-44 encryption");
+  }
+
+  const pubkey = await signer.getPublicKey();
   const plaintextBase64 = uint8ArrayToBase64(fileBytes);
-  return window.nostr.nip44.encrypt(pubkey, plaintextBase64);
+  return signer.nip44Encrypt(pubkey, plaintextBase64);
 }
 
 /**
@@ -248,11 +240,13 @@ export async function encryptFile(fileBytes: Uint8Array): Promise<string> {
  * DEPRECATED: Use decryptFileWithKey instead
  */
 export async function decryptFile(ciphertext: string): Promise<Uint8Array> {
-  if (!window.nostr) throw new Error("Nostr signer not found");
-  const pubkey = await window.nostr.getPublicKey();
+  const signer = await signerManager.getSigner();
+  if (!signer.nip44Decrypt) {
+    throw new Error("Signer does not support NIP-44 decryption");
+  }
 
-  // Alby uses positional args: decrypt(peer, ciphertext)
-  const plaintextBase64 = await (window.nostr.nip44.decrypt as any)(pubkey, ciphertext);
+  const pubkey = await signer.getPublicKey();
+  const plaintextBase64 = await signer.nip44Decrypt(pubkey, ciphertext);
 
   if (!plaintextBase64) {
     throw new Error("Decryption returned empty result - did you cancel the prompt?");

@@ -17,8 +17,7 @@ import { createAuthEvent } from "../auth";
 import { BlossomClient } from "../blossom";
 import { useProfileContext } from "../hooks/useProfileContext";
 import { previewFile } from "../services/Preview/previewManager";
-
-const CUSTOM_FOLDERS_KEY = "formstr-drive-custom-folders";
+import { getStoredItem, setStoredItem, STORAGE_KEYS } from "../utils/persistence";
 
 export interface FileIndexContextType {
   files: FileMetadata[];
@@ -39,23 +38,35 @@ export interface FileIndexContextType {
 export const FileIndexContext = createContext<FileIndexContextType | null>(null);
 
 export function FileIndexProvider({ children }: { children: ReactNode }) {
-  const { isSignedIn , pubkey } = useProfileContext();
+  const { isSignedIn, pubkey, restoring } = useProfileContext();
 
   const [files, setFiles] = useState<FileMetadata[]>([]);
   const [currentFolder, setCurrentFolder] = useState("/");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [customFolders, setCustomFolders] = useState<string[]>(() => {
-    const stored = localStorage.getItem(CUSTOM_FOLDERS_KEY);
-    return stored ? JSON.parse(stored) : [];
-  });
+  const [customFolders, setCustomFolders] = useState<string[]>([]);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
 
   const foldersFromFiles = extractFolders(files);
   const folders = Array.from(new Set([...foldersFromFiles, ...customFolders])).sort();
 
   useEffect(() => {
-    localStorage.setItem(CUSTOM_FOLDERS_KEY, JSON.stringify(customFolders));
-  }, [customFolders]);
+    const loadCustomFolders = async () => {
+      const storedCustomFolders = await getStoredItem<string[]>(
+        STORAGE_KEYS.CUSTOM_FOLDERS,
+        [],
+      );
+      setCustomFolders(storedCustomFolders);
+      setSettingsLoaded(true);
+    };
+
+    void loadCustomFolders();
+  }, []);
+
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    void setStoredItem(STORAGE_KEYS.CUSTOM_FOLDERS, customFolders);
+  }, [customFolders, settingsLoaded]);
 
   const addCustomFolder = useCallback((path: string) => {
     setCustomFolders((prev) => {
@@ -80,12 +91,13 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
   }, [isSignedIn, pubkey]);
 
   useEffect(() => {
+    if (restoring) return;
     if (isSignedIn) {
-      refresh();
+      void refresh();
     } else {
       setFiles([]);
     }
-  }, [isSignedIn, refresh]);
+  }, [isSignedIn, refresh, restoring]);
 
   const uploadFile = useCallback(
     async (file: File, server: string) => {
