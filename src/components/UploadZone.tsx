@@ -2,6 +2,14 @@ import { useState, useCallback, useRef } from "react";
 import { useFileIndex } from "../hooks/useFileContext";
 import { useBlossomServer } from "../hooks/useBlossomServer";
 
+function getHostname(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
+
 export function UploadZone() {
   const { uploadFile, uploadProgress } = useFileIndex();
   const { servers, selectedServer, setSelectedServer, addCustomServer } = useBlossomServer();
@@ -10,6 +18,7 @@ export function UploadZone() {
   const [error, setError] = useState<string | null>(null);
   const [showServerMenu, setShowServerMenu] = useState(false);
   const [customUrl, setCustomUrl] = useState("");
+  const [customServerError, setCustomServerError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFiles = useCallback(
@@ -68,9 +77,13 @@ export function UploadZone() {
   };
 
   const handleAddCustom = () => {
-    if (customUrl.trim()) {
+    if (!customUrl.trim()) return;
+    try {
       addCustomServer(customUrl);
       setCustomUrl("");
+      setCustomServerError(null);
+    } catch (e) {
+      setCustomServerError(e instanceof Error ? e.message : "Invalid server URL");
     }
   };
 
@@ -120,7 +133,7 @@ export function UploadZone() {
               setShowServerMenu(!showServerMenu);
             }}
           >
-            {new URL(selectedServer).hostname} ▼
+            {getHostname(selectedServer)} ▼
           </button>
 
           {showServerMenu && (
@@ -134,7 +147,7 @@ export function UploadZone() {
                     setShowServerMenu(false);
                   }}
                 >
-                  {new URL(s.url).hostname}
+                  {getHostname(s.url)}
                   {s.source !== "default" && (
                     <span className="server-source">{s.source}</span>
                   )}
@@ -145,12 +158,18 @@ export function UploadZone() {
                 <input
                   type="text"
                   value={customUrl}
-                  onChange={(e) => setCustomUrl(e.target.value)}
+                  onChange={(e) => {
+                    setCustomUrl(e.target.value);
+                    setCustomServerError(null);
+                  }}
                   placeholder="Add server..."
                   onKeyDown={(e) => e.key === "Enter" && handleAddCustom()}
                 />
                 <button onClick={handleAddCustom}>+</button>
               </div>
+              {customServerError && (
+                <p className="error-message">{customServerError}</p>
+              )}
             </div>
           )}
         </div>
