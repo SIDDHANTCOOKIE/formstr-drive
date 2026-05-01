@@ -17,9 +17,8 @@
 
 .drive-main {
   flex: 1;
-  overflow-y: auto;
+  overflow: hidden;
   padding: 24px;
-  padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
   min-height: 0;
 }
 
@@ -351,7 +350,132 @@
 
 /* File List */
 .file-list-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
   max-width: 1200px;
+}
+
+.file-list-scroll {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding-bottom: 120px;
+}
+
+.bulk-action-bar {
+  position: fixed;
+  left: 264px;
+  right: 24px;
+  bottom: 24px;
+  z-index: 250;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  background: rgba(247, 249, 252, 0.98);
+  border: 1px solid #d9e3f0;
+  border-radius: 12px;
+  box-shadow: 0 12px 30px rgba(16, 24, 40, 0.16);
+}
+
+.bulk-action-summary {
+  font-size: 14px;
+  color: #234;
+}
+
+.bulk-action-buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.bulk-secondary-btn,
+.bulk-danger-btn,
+.bulk-clear-btn {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 6px;
+  border: 1px solid #d0d7e2;
+  background: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.bulk-secondary-btn:hover,
+.bulk-clear-btn:hover {
+  background: #f3f6fa;
+}
+
+.bulk-danger-btn {
+  border-color: #f0c5c5;
+  color: #b00020;
+  background: #fff7f7;
+}
+
+.bulk-danger-btn:hover {
+  background: #ffecec;
+}
+
+.bulk-secondary-btn:disabled,
+.bulk-danger-btn:disabled,
+.bulk-clear-btn:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.bulk-secondary-btn:disabled,
+.bulk-clear-btn:disabled {
+  background: #f5f7fa;
+  border-color: #d8dee8;
+  color: #7a8698;
+}
+
+.bulk-danger-btn:disabled {
+  background: #fff3f3;
+  border-color: #f1d4d4;
+  color: #c58d8d;
+}
+
+.bulk-action-error {
+  margin-bottom: 12px;
+  color: #c00;
+  font-size: 13px;
+}
+
+.bulk-action-hint {
+  margin: 0 0 14px;
+  color: #666;
+  font-size: 13px;
+}
+
+.bulk-delete-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.bulk-delete-list-item {
+  padding: 10px 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  background: #fafafa;
+}
+
+.bulk-delete-file-name {
+  display: block;
+  color: #111;
+  font-size: 14px;
+  word-break: break-word;
 }
 
 .loading-container{
@@ -399,9 +523,71 @@
   position: relative;
 }
 
+.file-card.selected,
+.file-tile.selected {
+  border-color: #6aa6ff;
+  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.12);
+}
+
 .file-card:hover {
   border-color: #ccc;
   box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+}
+
+.file-select {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.file-select input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.file-select-box {
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid #aab7c7;
+  border-radius: 5px;
+  background: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.file-select input:checked + .file-select-box {
+  background: #0066cc;
+  border-color: #0066cc;
+}
+
+.file-select input:checked + .file-select-box::after {
+  content: "";
+  width: 5px;
+  height: 9px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg) translate(-1px, -1px);
+}
+
+.file-select-list {
+  position: relative;
+}
+
+.file-select-tile {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 3;
+}
+
+.file-select-tile .file-select-box {
+  background: rgba(255, 255, 255, 0.96);
 }
 
 .file-icon {
@@ -1198,6 +1384,19 @@
     text-align: center;
     gap: 10px;
   }
+
+  .bulk-action-bar {
+    right: 16px;
+    left: 16px;
+    bottom: 16px;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .bulk-action-buttons {
+    width: 100%;
+    justify-content: flex-start;
+  }
 }
 
 /* Hide backdrop on desktop */
@@ -1235,6 +1434,12 @@
   border-bottom: 1px solid #e0e0e0;
 }
 
+.file-list-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .search-wrap {
   flex: 1;
   position: relative;
@@ -1265,6 +1470,10 @@
   background: #fff;
 }
 
+.bulk-select-toggle {
+  white-space: nowrap;
+}
+
 .view-toggle {
   display: flex;
   border: 1px solid #e0e0e0;
@@ -1291,6 +1500,17 @@
 
 .view-btn:hover:not(.active) {
   background: #fafafa;
+}
+
+@media (max-width: 768px) {
+  .file-list-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .file-list-toolbar-actions {
+    justify-content: space-between;
+  }
 }
 
 /* List view */
@@ -1382,11 +1602,6 @@
   opacity: 0;
   transition: opacity 0.15s;
   pointer-events: none;
-}
-
-.file-tile:hover .file-tile-overlay {
-  opacity: 1;
-  pointer-events: auto;
 }
 
 .file-tile:hover .file-tile-overlay {
