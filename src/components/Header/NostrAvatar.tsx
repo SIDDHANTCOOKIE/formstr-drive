@@ -19,22 +19,32 @@ export const NostrAvatar : FC<NostrAvatarProps> = memo(({ pubkey }) => {
     useEffect(() => {
         if(!pubkey) return;
 
+        let cancelled = false;
         const pool = new SimplePool();
+
         async function getProfile() {
-            let filter = {
-                kinds: [0],
-                authors : [pubkey!],
-            };
-            const profile = await pool.get(defaultRelays, filter);
-            if(profile){
-                setProfile(JSON.parse(profile.content));
+            try {
+                const filter = {
+                    kinds: [0],
+                    authors: [pubkey!],
+                };
+                const event = await pool.get(defaultRelays, filter);
+                if (cancelled) return;
+                if (event) {
+                    const parsed = JSON.parse(event.content);
+                    setProfile(parsed);
+                }
+            } catch {
+                // Ignore errors from unreachable relays or malformed profile content
             }
         }
-        getProfile()
+
+        getProfile();
 
         return () => {
+            cancelled = true;
             pool.close(defaultRelays);
-        }
+        };
     },[pubkey]);
     
     return (
