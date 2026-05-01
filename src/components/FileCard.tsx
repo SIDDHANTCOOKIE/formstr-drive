@@ -8,6 +8,8 @@ import { BlossomClient } from "../blossom";
 interface FileCardProps {
   file: FileMetadata;
   viewMode?: "grid" | "list";
+  selected?: boolean;
+  onToggleSelection?: (hash: string) => void;
 }
 
 function getFileIcon(type: string): string {
@@ -43,7 +45,12 @@ async function getPreview(file: FileMetadata): Promise<string> {
   return imageUrl;
 }
 
-export function FileCard({ file, viewMode = "list" }: FileCardProps) {
+export function FileCard({
+  file,
+  viewMode = "list",
+  selected = false,
+  onToggleSelection,
+}: FileCardProps) {
   const { deleteFile, moveFile, folders, renameFile } = useFileIndex();
   const [downloading, setDownloading] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
@@ -170,6 +177,24 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
 
   const icon = getFileIcon(file.type);
   const hasPreview = previewloaded && !!preview;
+  const handleSelectionToggle = () => {
+    onToggleSelection?.(file.hash);
+  };
+
+  const selectionControl = (
+    <label
+      className={`file-select ${viewMode === "grid" ? "file-select-tile" : "file-select-list"}`}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <input
+        type="checkbox"
+        checked={selected}
+        onChange={handleSelectionToggle}
+        aria-label={`Select ${file.name}`}
+      />
+      <span className="file-select-box" aria-hidden="true" />
+    </label>
+  );
 
   const renameModal = showRenameModal && (
     <div className="move-dialog-overlay" onClick={() => setShowRenameModal(false)}>
@@ -237,9 +262,10 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
             onClick={() => setShowMenu(false)}
           />
         )}
-        <div className={`file-tile ${showMenu ? "menu-open" : ""}`}>
+        <div className={`file-tile ${showMenu ? "menu-open" : ""} ${selected ? "selected" : ""}`}>
           {/* Preview area */}
           <div className="file-tile-preview">
+            {selectionControl}
             {hasPreview ? (
               <img src={preview} alt={file.name} className="file-tile-img" />
             ) : null}
@@ -283,20 +309,6 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
             </div>
           </div>
 
-          {showMenu && (
-            <div
-              className="file-menu tile-menu"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <button onClick={handleMoveClick} className="move-btn">
-                Move to Folder
-              </button>
-              <button onClick={handleDelete} className="delete-btn">
-                Delete
-              </button>
-            </div>
-          )}
-
           {/* Footer */}
           <div className="file-tile-footer">
             <span className="file-tile-name" title={file.name}>{file.name}</span>
@@ -315,7 +327,8 @@ export function FileCard({ file, viewMode = "list" }: FileCardProps) {
   return (
     <>
       {showMenu && <div className="file-menu-backdrop" onClick={() => setShowMenu(false)} />}
-      <div className="file-card">
+      <div className={`file-card ${selected ? "selected" : ""}`}>
+        {selectionControl}
         {previewloaded && preview ? (
           <div className="file-icon" data-type={icon}>
             <img src={preview} alt="" />
