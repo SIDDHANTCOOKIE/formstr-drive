@@ -1,5 +1,6 @@
 import { createContext , type FC, type ReactNode , useState } from "react";
 import { setItem, LOCAL_STORAGE_KEYS, getItem } from "../utils/localStorage";
+import { isNativePlatform } from "../utils/platform";
 
 interface ProfileProviderProps {
     children? : ReactNode;
@@ -27,6 +28,9 @@ export const ProfileProvider : FC<ProfileProviderProps> = ({ children }) => {
     const isSignedIn = !!pubkey;
     
     const requestPubkey = async () => {
+        if (isNativePlatform) {
+            throw new Error("Android signer support will be added next");
+        }
         if (!window.nostr) throw new Error("NIP-07 extension not found");
         let publicKey = await window.nostr.getPublicKey();
         setPubkey(publicKey);

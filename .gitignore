@@ -25,3 +25,11 @@ tsconfig.json~
 
 # Ignore public directory (if needed, otherwise remove this line)
 public/
+
+# Android local artifacts
+android/.gradle/
+android/.idea/
+android/build/
+android/app/build/
+android/local.properties
+android/captures/
