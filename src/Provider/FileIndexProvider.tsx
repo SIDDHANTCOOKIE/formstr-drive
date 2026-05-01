@@ -20,6 +20,11 @@ import { previewFile } from "../services/Preview/previewManager";
 
 const CUSTOM_FOLDERS_KEY = "formstr-drive-custom-folders";
 
+export interface UploadProgress {
+  fileName: string;
+  stage: string;
+}
+
 export interface FileIndexContextType {
   files: FileMetadata[];
   folders: string[];
@@ -29,6 +34,7 @@ export interface FileIndexContextType {
   setCurrentFolder: (folder: string) => void;
   loading: boolean;
   error: string | null;
+  uploadProgress: UploadProgress | null;
   uploadFile: (file: File, server: string) => Promise<void>;
   deleteFile: (hash: string) => Promise<void>;
   deleteFiles: (hashes: string[]) => Promise<void>;
@@ -47,6 +53,7 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
   const [currentFolder, setCurrentFolder] = useState("/");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [customFolders, setCustomFolders] = useState<string[]>(() => {
     const stored = localStorage.getItem(CUSTOM_FOLDERS_KEY);
     return stored ? JSON.parse(stored) : [];
@@ -92,10 +99,15 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
   const uploadFile = useCallback(
     async (file: File, server: string) => {
       setError(null);
+
       try {
+        setUploadProgress({ fileName: file.name, stage: "Reading file..." });
         const bytes = new Uint8Array(await file.arrayBuffer());
+
+        setUploadProgress({ fileName: file.name, stage: "Encrypting..." });
         const { ciphertext, privateKeyHex } = await encryptFileWithKey(bytes);
 
+        setUploadProgress({ fileName: file.name, stage: "Uploading..." });
         const client = new BlossomClient(server);
         const encryptedBytes = new TextEncoder().encode(ciphertext);
         const auth = await createAuthEvent("upload", `Upload ${file.name}`, encryptedBytes);
@@ -104,11 +116,14 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
         let previewHash: string | undefined = undefined;
         const preview = await previewFile(file);
         if (preview) {
+          setUploadProgress({ fileName: file.name, stage: "Uploading preview..." });
           const encrypted = await encryptFile(preview);
           const encryptedPreviewBytes = new TextEncoder().encode(encrypted);
           const previewAuth = await createAuthEvent("upload", "Upload preview image", encryptedPreviewBytes);
           previewHash = await client.upload(encryptedPreviewBytes, previewAuth);
         }
+
+        setUploadProgress({ fileName: file.name, stage: "Saving metadata..." });
         const metadata: FileMetadata = {
           name: file.name,
           hash,
@@ -127,6 +142,8 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
         const errorMsg = e instanceof Error ? e.message : "Upload failed";
         setError(errorMsg);
         throw e;
+      } finally {
+        setUploadProgress(null);
       }
     },
     [currentFolder]
@@ -211,6 +228,7 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
         setCurrentFolder,
         loading,
         error,
+        uploadProgress,
         uploadFile,
         deleteFile,
         deleteFiles,
