@@ -3,7 +3,6 @@ import { fetchFile, toBlobURL } from "@ffmpeg/util";
 
 let ffmpeg: FFmpeg | null = null;
 
-const FFMPEG_LOAD_TIMEOUT_MS = 15_000;
 const THUMBNAIL_TIMEOUT_MS = 10_000;
 
 async function loadFFmpeg(): Promise<FFmpeg> {
@@ -12,18 +11,10 @@ async function loadFFmpeg(): Promise<FFmpeg> {
     const instance = new FFmpeg();
     const baseURL = "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd";
 
-    const loadPromise = (async () => {
-        await instance.load({
-            coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
-            wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm"),
-        });
-    })();
-
-    const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("FFmpeg load timed out")), FFMPEG_LOAD_TIMEOUT_MS)
-    );
-
-    await Promise.race([loadPromise, timeoutPromise]);
+    await instance.load({
+        coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
+        wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm"),
+    });
 
     ffmpeg = instance;
     return ffmpeg;
