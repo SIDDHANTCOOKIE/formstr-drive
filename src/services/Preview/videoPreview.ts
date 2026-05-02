@@ -3,17 +3,20 @@ import { fetchFile, toBlobURL } from "@ffmpeg/util";
 
 let ffmpeg: FFmpeg | null = null;
 
+const THUMBNAIL_TIMEOUT_MS = 10_000;
+
 async function loadFFmpeg(): Promise<FFmpeg> {
     if (ffmpeg) return ffmpeg;
 
-    ffmpeg = new FFmpeg();
+    const instance = new FFmpeg();
     const baseURL = "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd";
 
-    await ffmpeg.load({
+    await instance.load({
         coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
         wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm"),
     });
 
+    ffmpeg = instance;
     return ffmpeg;
 }
 
@@ -45,6 +48,21 @@ export async function generateVideoThumbnail(file: File): Promise<Uint8Array> {
     return new Promise((resolve, reject) => {
         const video = document.createElement("video");
         const url = URL.createObjectURL(file);
+        let settled = false;
+
+        const cleanup = () => URL.revokeObjectURL(url);
+
+        const settle = (fn: () => void) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeoutId);
+            cleanup();
+            fn();
+        };
+
+        const timeoutId = setTimeout(() => {
+            settle(() => reject(new Error("Video thumbnail generation timed out")));
+        }, THUMBNAIL_TIMEOUT_MS);
 
         video.src = url;
         video.muted = true;
@@ -70,22 +88,21 @@ export async function generateVideoThumbnail(file: File): Promise<Uint8Array> {
                 canvas.width = video.videoWidth * scale;
                 canvas.height = video.videoHeight * scale;
 
-                const ctx = canvas.getContext("2d")!;
+                const ctx = canvas.getContext("2d");
+                if (!ctx) throw new Error("Failed to get canvas 2D context");
                 ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-                const blob = await new Promise<Blob>((res) =>
-                    canvas.toBlob((b) => res(b!), "image/webp", 0.7)
+                const blob = await new Promise<Blob>((res, rej) =>
+                    canvas.toBlob((b) => b ? res(b) : rej(new Error("Canvas export failed")), "image/webp", 0.7)
                 );
 
                 const buffer = new Uint8Array(await blob.arrayBuffer());
-
-                URL.revokeObjectURL(url);
-                resolve(buffer);
+                settle(() => resolve(buffer));
             } catch (err) {
-                reject(err);
+                settle(() => reject(err));
             }
         };
 
-        video.onerror = reject;
+        video.onerror = () => settle(() => reject(new Error("Video loading failed")));
     });
 }
