@@ -1,7 +1,22 @@
+import { signerManager } from "./signer/manager";
+
 async function computeSha256Hex(data: Uint8Array | Blob): Promise<string> {
   const buffer = data instanceof Blob ? await data.arrayBuffer() : data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
   const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
   return Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function toBase64Utf8(value: unknown): string {
+  const bytes = new TextEncoder().encode(JSON.stringify(value));
+  let binary = "";
+  const chunkSize = 0x8000;
+
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, index + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+
+  return btoa(binary);
 }
 
 export async function createAuthEvent(
@@ -10,10 +25,8 @@ export async function createAuthEvent(
   fileOrHash?: Uint8Array | Blob | string,
   expirationSeconds = 60,
 ) {
-  if (!window.nostr || !window.nostr.signEvent)
-    throw new Error("No Nostr signer with signEvent");
-
-  const pubkey = await window.nostr.getPublicKey();
+  const signer = await signerManager.getSigner();
+  const pubkey = await signer.getPublicKey();
   const now = Math.floor(Date.now() / 1000);
 
   const tags: string[][] = [
@@ -38,7 +51,7 @@ export async function createAuthEvent(
     tags,
   };
 
-  const signedEvent = await window.nostr.signEvent(event);
-  const b64 = btoa(JSON.stringify(signedEvent));
+  const signedEvent = await signer.signEvent(event);
+  const b64 = toBase64Utf8(signedEvent);
   return `Nostr ${b64}`;
 }

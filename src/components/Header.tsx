@@ -23,13 +23,25 @@ export function Header({ onMenuClick }: HeaderProps) {
     pubkey
       ? {
         key: "logout",
-        label: <a onClick={logout}>Logout</a>,
+        label: "Logout",
       }
       : {
         key: "login",
-        label: <a onClick={requestPubkey}>Login</a>,
+        label: "Login",
       }
-  ]
+  ];
+
+  const handleDropdownClick: MenuProps["onClick"] = ({ key }) => {
+    if (key === "logout") {
+      void logout();
+      return;
+    }
+
+    if (key === "login") {
+      void requestPubkey();
+    }
+  };
+
   return (
     <header className="app-header">
       <div className="header-left">
@@ -54,7 +66,7 @@ export function Header({ onMenuClick }: HeaderProps) {
             ↻
           </button>
         ) : (
-          <button className="sign-in-btn" onClick={requestPubkey}>
+          <button className="sign-in-btn" onClick={() => void requestPubkey()}>
             Connect Wallet
           </button>
         )}
@@ -62,6 +74,7 @@ export function Header({ onMenuClick }: HeaderProps) {
           <Dropdown
             menu={{
               items: dropdownMenuItems,
+              onClick: handleDropdownClick,
             }}
             trigger={["click"]}
           >

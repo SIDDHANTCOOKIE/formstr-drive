@@ -1,5 +1,6 @@
 import { SimplePool, type Filter } from "nostr-tools";
 import type { FileMetadata, NostrEvent } from "../types/metadata";
+import { signerManager } from "../signer/manager";
 import { APP_RELAYS } from "../utils/common";
 
 const METADATA_KIND = 34578;
@@ -7,22 +8,29 @@ const CLIENT_TAG = "formstr-drive";
 
 const RELAYS = APP_RELAYS;
 
-async function getNostr() {
-  if (!window.nostr) throw new Error("Nostr signer not found");
-  return window.nostr;
+async function getSigner() {
+  return signerManager.getSigner();
 }
 
 async function encryptMetadata(metadata: FileMetadata): Promise<string> {
-  const nostr = await getNostr();
-  const pubkey = await nostr.getPublicKey();
+  const signer = await getSigner();
+  if (!signer.nip44Encrypt) {
+    throw new Error("Signer does not support NIP-44 encryption");
+  }
+
+  const pubkey = await signer.getPublicKey();
   const json = JSON.stringify(metadata);
-  return nostr.nip44.encrypt(pubkey, json);
+  return signer.nip44Encrypt(pubkey, json);
 }
 
 async function decryptMetadata(ciphertext: string): Promise<FileMetadata> {
-  const nostr = await getNostr();
-  const pubkey = await nostr.getPublicKey();
-  const json = await (nostr.nip44.decrypt as any)(pubkey, ciphertext);
+  const signer = await getSigner();
+  if (!signer.nip44Decrypt) {
+    throw new Error("Signer does not support NIP-44 decryption");
+  }
+
+  const pubkey = await signer.getPublicKey();
+  const json = await signer.nip44Decrypt(pubkey, ciphertext);
   return JSON.parse(json);
 }
 
@@ -112,8 +120,8 @@ export async function fetchFileIndex(pubkey: string): Promise<FileMetadata[]> {
 
 export async function saveFileMetadata(metadata: FileMetadata): Promise<void> {
   console.log("[FileIndex] Saving metadata:", metadata);
-  const nostr = await getNostr();
-  const pubkey = await nostr.getPublicKey();
+  const signer = await getSigner();
+  const pubkey = await signer.getPublicKey();
   const pool = new SimplePool();
 
   try {
@@ -133,7 +141,7 @@ export async function saveFileMetadata(metadata: FileMetadata): Promise<void> {
     };
 
     console.log("[FileIndex] Event to publish:", event);
-    const signedEvent = await nostr.signEvent(event as object);
+    const signedEvent = await signer.signEvent(event);
     console.log("[FileIndex] Signed event:", signedEvent);
 
     const publishPromises = pool.publish(RELAYS, signedEvent as any);
@@ -161,8 +169,8 @@ export async function updateFileMetadata(
   hash: string,
   updates: Partial<Pick<FileMetadata, "name" | "folder">>
 ): Promise<void> {
-  const nostr = await getNostr();
-  const pubkey = await nostr.getPublicKey();
+  const signer = await getSigner();
+  const pubkey = await signer.getPublicKey();
   const files = await fetchFileIndex(pubkey);
   const existing = files.find((f) => f.hash === hash);
 
