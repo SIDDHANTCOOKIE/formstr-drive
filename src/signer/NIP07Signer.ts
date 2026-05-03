@@ -21,18 +21,17 @@ export const nip07Signer: NostrSigner = {
   },
 
   nip44Decrypt: async (pubkey: string, ciphertext: string): Promise<string> => {
-    const decrypt = window.nostr?.nip44?.decrypt;
-    if (!decrypt) {
+    if (!window.nostr?.nip44?.decrypt) {
       throw new Error("NIP-44 decryption not supported");
     }
 
     try {
-      return await (decrypt as (peerPubkey: string, value: string) => Promise<string>)(
+      return await (window.nostr.nip44.decrypt as (peerPubkey: string, value: string) => Promise<string>)(
         pubkey,
         ciphertext,
       );
     } catch {
-      return (decrypt as (params: { pubkey: string; ciphertext: string }) => Promise<string>)({
+      return (window.nostr.nip44.decrypt as (params: { pubkey: string; ciphertext: string }) => Promise<string>)({
         pubkey,
         ciphertext,
       });

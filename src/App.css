@@ -360,7 +360,6 @@
   flex: 1;
   overflow-y: auto;
   min-height: 0;
-  padding-bottom: 120px;
 }
 
 .bulk-action-bar {
@@ -540,6 +539,19 @@
   justify-content: center;
   flex-shrink: 0;
   cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+/* Show checkbox when parent card/tile is hovered */
+.file-card:hover .file-select,
+.file-tile:hover .file-select {
+  opacity: 1;
+}
+
+/* Always show when checked */
+.file-select:has(input:checked) {
+  opacity: 1;
 }
 
 .file-select input {
