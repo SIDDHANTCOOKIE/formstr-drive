@@ -195,12 +195,26 @@ class SignerManager {
           null,
         );
 
-        if (profile?.pubkey && window.nostr) {
-          this.signer = nip07Signer;
-          this.pubkey = profile.pubkey;
-          await setStoredItem(STORAGE_KEYS.AUTH_METHOD, "nip07");
-          this.notify();
-          return profile.pubkey;
+        if (profile?.pubkey) {
+          // NIP-07 extensions inject window.nostr asynchronously; wait for it
+          let nostrAvailable = !!window.nostr;
+          if (!nostrAvailable) {
+            for (let attempt = 0; attempt < 10; attempt++) {
+              await new Promise((r) => setTimeout(r, 200));
+              if (window.nostr) {
+                nostrAvailable = true;
+                break;
+              }
+            }
+          }
+
+          if (nostrAvailable) {
+            this.signer = nip07Signer;
+            this.pubkey = profile.pubkey;
+            await setStoredItem(STORAGE_KEYS.AUTH_METHOD, "nip07");
+            this.notify();
+            return profile.pubkey;
+          }
         }
       }
     } catch (error) {

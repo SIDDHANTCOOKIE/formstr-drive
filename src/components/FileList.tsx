@@ -259,7 +259,7 @@ export function FileList() {
 
   return (
     <div className="file-list-container">
-      <div className="file-list-scroll">
+      <div className="file-list-scroll" style={selectedCount > 0 ? { paddingBottom: 120 } : undefined}>
         <UploadZone />
 
         {bulkError && <div className="bulk-action-error">{bulkError}</div>}
@@ -386,34 +386,36 @@ export function FileList() {
         )}
       </div>
 
-      <div className="bulk-action-bar">
-        <div className="bulk-action-summary">
-          <strong>{selectedCount}</strong> file{selectedCount === 1 ? "" : "s"} selected
+      {selectedCount > 0 && (
+        <div className="bulk-action-bar">
+          <div className="bulk-action-summary">
+            <strong>{selectedCount}</strong> file{selectedCount === 1 ? "" : "s"} selected
+          </div>
+          <div className="bulk-action-buttons">
+            <button
+              className="bulk-secondary-btn"
+              onClick={() => setShowMoveDialog(true)}
+              disabled={bulkAction !== null}
+            >
+              {bulkAction === "move" ? "Moving..." : "Move selected"}
+            </button>
+            <button
+              className="bulk-danger-btn"
+              onClick={handleRequestBulkDelete}
+              disabled={bulkAction !== null}
+            >
+              {bulkAction === "delete" ? "Deleting..." : "Delete selected"}
+            </button>
+            <button
+              className="bulk-clear-btn"
+              onClick={handleClearSelection}
+              disabled={bulkAction !== null}
+            >
+              Clear
+            </button>
+          </div>
         </div>
-        <div className="bulk-action-buttons">
-          <button
-            className="bulk-secondary-btn"
-            onClick={() => setShowMoveDialog(true)}
-            disabled={bulkAction !== null || selectedCount === 0}
-          >
-            {bulkAction === "move" ? "Moving..." : "Move selected"}
-          </button>
-          <button
-            className="bulk-danger-btn"
-            onClick={handleRequestBulkDelete}
-            disabled={bulkAction !== null || selectedCount === 0}
-          >
-            {bulkAction === "delete" ? "Deleting..." : "Delete selected"}
-          </button>
-          <button
-            className="bulk-clear-btn"
-            onClick={handleClearSelection}
-            disabled={bulkAction !== null || selectedCount === 0}
-          >
-            Clear
-          </button>
-        </div>
-      </div>
+      )}
       {bulkDeleteDialog}
       {bulkMoveDialog}
     </div>

@@ -33,8 +33,16 @@ function formatDate(timestamp: number): string {
   return new Date(timestamp).toLocaleDateString();
 }
 
+// Session-level preview cache: avoids re-fetching (and re-signing) when
+// navigating between folders. Keyed by previewHash → blob URL.
+const previewCache = new Map<string, string>();
+
 async function getPreview(file: FileMetadata): Promise<string> {
   if (!file.previewHash) return "";
+
+  const cached = previewCache.get(file.previewHash);
+  if (cached) return cached;
+
   const client = new BlossomClient(file.server);
   const auth = await createAuthEvent("get", `Get preview ${file.previewHash}`, file.previewHash);
   const uint8arr = await client.download(file.previewHash, auth);
@@ -42,6 +50,8 @@ async function getPreview(file: FileMetadata): Promise<string> {
   const decrypted = await decryptFile(ciphertext);
   const blob = new Blob([decrypted as BlobPart], { type: "image/webp" });
   const imageUrl = URL.createObjectURL(blob);
+
+  previewCache.set(file.previewHash, imageUrl);
   return imageUrl;
 }
 
@@ -64,7 +74,13 @@ export function FileCard({
 
   useEffect(() => {
     let cancelled = false;
-    let urlToRevoke: string | null = null;
+
+    // Check cache first — if cached, set immediately without async work
+    if (file.previewHash && previewCache.has(file.previewHash)) {
+      setPreview(previewCache.get(file.previewHash)!);
+      setPreviewloaded(true);
+      return;
+    }
 
     setPreviewloaded(false);
     setPreview(null);
@@ -72,12 +88,7 @@ export function FileCard({
     getPreview(file)
       .then((url) => {
         if (cancelled) return;
-        if (!url) {
-          setPreview(null);
-          return;
-        }
-        urlToRevoke = url;
-        setPreview(url);
+        setPreview(url || null);
       })
       .catch(() => {
         if (cancelled) return;
@@ -90,7 +101,7 @@ export function FileCard({
 
     return () => {
       cancelled = true;
-      if (urlToRevoke) URL.revokeObjectURL(urlToRevoke);
+      // Don't revoke — cached URLs are reused across folder navigation
     };
   }, [file]);
 
@@ -264,7 +275,7 @@ export function FileCard({
         )}
         <div className={`file-tile ${showMenu ? "menu-open" : ""} ${selected ? "selected" : ""}`}>
           {/* Preview area */}
-          <div className="file-tile-preview">
+          <div className={`file-tile-preview ${showMenu ? "menu-open" : ""}`}>
             {selectionControl}
             {hasPreview ? (
               <img src={preview} alt={file.name} className="file-tile-img" />
@@ -299,6 +310,7 @@ export function FileCard({
               >
                 ⋮
               </button>
+
               {showMenu && (
                 <div className="file-menu tile-menu" onClick={(e) => e.stopPropagation()}>
                   <button onClick={handleMoveClick} className="move-btn">Move to Folder</button>
