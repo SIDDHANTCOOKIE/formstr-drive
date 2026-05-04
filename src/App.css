@@ -1561,6 +1561,10 @@
   border-radius: 8px 8px 0 0;
 }
 
+.file-tile-preview.menu-open {
+  overflow: visible;
+}
+
 .file-tile-img {
   width: 100%;
   height: 100%;
@@ -1639,11 +1643,11 @@
 }
 
 .tile-menu {
-  bottom: 100%;
-  top: auto;
-  right: 0;
-  margin-bottom: 4px;
-  z-index: 50;
+  top: calc(100% + 8px);
+  bottom: auto;
+  right: -18px;
+  margin: 0;
+  z-index: 60;
 }
 
 /* Footer */
