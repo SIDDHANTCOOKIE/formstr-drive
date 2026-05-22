@@ -21,18 +21,3 @@ Open the Android project in Android Studio:
 ```bash
 pnpm android:open
 ```
-
-## What Is Done
-
-- Capacitor is added to the repo
-- The Android project is generated and tracked
-- The Android shell can launch the app
-- The web app build is used inside the Android shell
-- Android sign-in is currently shown as not available yet
-
-## Current Limitations
-
-- Android signer integration is not added yet
-- Native file upload and download flow is not added yet
-- Android Files / `DocumentsProvider` integration is not added yet
-- Final launcher icon and splash branding is not added yet
