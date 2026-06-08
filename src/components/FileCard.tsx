@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from "react";
 import type { FileMetadata } from "../types/metadata";
 import { useFileIndex } from "../hooks/useFileContext";
-import { decryptFile, decryptFileWithKey } from "../crypto";
+import { decryptFileWithKey } from "../crypto";
 import { createAuthEvent } from "../auth";
 import { BlossomClient } from "../blossom";
+import { saveFileToDownloads, openDownloadedFile } from "../native/driveManifest";
+import { isNativePlatform } from "../utils/platform";
 
 interface FileCardProps {
   file: FileMetadata;
@@ -47,7 +49,7 @@ async function getPreview(file: FileMetadata): Promise<string> {
   const auth = await createAuthEvent("get", `Get preview ${file.previewHash}`, file.previewHash);
   const uint8arr = await client.download(file.previewHash, auth);
   const ciphertext = new TextDecoder().decode(uint8arr as Uint8Array<ArrayBuffer>);
-  const decrypted = await decryptFile(ciphertext);
+  const decrypted = await decryptFileWithKey(ciphertext, file.encryptionKey);
   const blob = new Blob([decrypted as BlobPart], { type: "image/webp" });
   const imageUrl = URL.createObjectURL(blob);
 
@@ -63,6 +65,8 @@ export function FileCard({
 }: FileCardProps) {
   const { deleteFile, moveFile, folders, renameFile } = useFileIndex();
   const [downloading, setDownloading] = useState(false);
+  const [downloadedUri, setDownloadedUri] = useState<string | null>(null);
+  const [showToast, setShowToast] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [showMoveDialog, setShowMoveDialog] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
@@ -124,12 +128,10 @@ export function FileCard({
       const ciphertext = new TextDecoder().decode(blob);
       const decrypted = await decryptFileWithKey(ciphertext, file.encryptionKey);
 
-      const url = URL.createObjectURL(new Blob([decrypted as BlobPart], { type: file.type }));
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = file.name;
-      a.click();
-      URL.revokeObjectURL(url);
+      const result = await saveFileToDownloads(decrypted as Uint8Array, file.name, file.type || "application/octet-stream");
+      setDownloadedUri(result?.uri ?? null);
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 5000);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Download failed");
     } finally {
@@ -188,6 +190,22 @@ export function FileCard({
 
   const icon = getFileIcon(file.type);
   const hasPreview = previewloaded && !!preview;
+
+  const downloadToast = showToast && (
+    <div className="download-toast">
+      <span>Downloaded successfully</span>
+      {isNativePlatform && downloadedUri && (
+        <button
+          className="download-toast-view"
+          onClick={() => openDownloadedFile(downloadedUri, file.type || "application/octet-stream")}
+        >
+          View
+        </button>
+      )}
+      <button className="download-toast-close" onClick={() => setShowToast(false)}>×</button>
+    </div>
+  );
+
   const handleSelectionToggle = () => {
     onToggleSelection?.(file.hash);
   };
@@ -331,6 +349,7 @@ export function FileCard({
         </div>
         {moveDialog}
         {renameModal}
+        {downloadToast}
       </>
     );
   }
@@ -373,6 +392,7 @@ export function FileCard({
       </div>
       {moveDialog}
       {renameModal}
+      {downloadToast}
     </>
   );
 }
