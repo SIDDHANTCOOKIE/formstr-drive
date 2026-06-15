@@ -171,6 +171,13 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
 
       try {
         setUploadProgress({ fileName: file.name, stage: "Reading file..." });
+        
+        // Start generating preview immediately in the background
+        const previewPromise = previewFile(file).catch((e) => {
+          console.warn("Background preview generation failed", e);
+          return null;
+        });
+
         const bytes = new Uint8Array(await file.arrayBuffer());
 
         setUploadProgress({ fileName: file.name, stage: "Encrypting..." });
@@ -183,14 +190,17 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
         const hash = await client.upload(encryptedBytes, auth);
 
         let previewHash: string | undefined;
-        const preview = await previewFile(file);
+        
+        // Wait for preview if it's not done yet
+        const preview = await previewPromise;
+        
         if (preview) {
           setUploadProgress({ fileName: file.name, stage: "Uploading preview..." });
           const encrypted = await encryptFileWithExistingKey(preview, privateKeyHex);
           const encryptedPreviewBytes = new TextEncoder().encode(encrypted);
           const previewAuth = await createAuthEvent(
             "upload",
-            "Upload preview image",
+            "Upload file preview",
             encryptedPreviewBytes,
           );
           previewHash = await client.upload(encryptedPreviewBytes, previewAuth);

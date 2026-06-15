@@ -103,6 +103,12 @@ export function FilePreviewModal({ file, onClose }: FilePreviewModalProps) {
         return;
       }
 
+      if (file.size > 5 * 1024 * 1024) {
+        setError("File is too large to preview (over 5 MB). Please download it to view.");
+        setLoading(false);
+        return;
+      }
+
       try {
         const client = new BlossomClient(file.server);
         const encryptedBytes = await client.download(file.hash);

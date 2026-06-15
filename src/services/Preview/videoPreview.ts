@@ -3,7 +3,7 @@ import { fetchFile, toBlobURL } from "@ffmpeg/util";
 
 let ffmpeg: FFmpeg | null = null;
 
-const THUMBNAIL_TIMEOUT_MS = 10_000;
+
 
 async function loadFFmpeg(): Promise<FFmpeg> {
     if (ffmpeg) return ffmpeg;
@@ -50,54 +50,91 @@ export async function generateVideoThumbnail(file: File): Promise<Uint8Array> {
         const url = URL.createObjectURL(file);
         let settled = false;
 
-        const cleanup = () => URL.revokeObjectURL(url);
+        let cleanup = () => {
+            URL.revokeObjectURL(url);
+            if (video.parentNode) video.parentNode.removeChild(video);
+        };
 
         const settle = (fn: () => void) => {
             if (settled) return;
             settled = true;
-            clearTimeout(timeoutId);
             cleanup();
             fn();
         };
 
-        const timeoutId = setTimeout(() => {
+        // Failsafe timeout
+        setTimeout(() => {
             settle(() => reject(new Error("Video thumbnail generation timed out")));
-        }, THUMBNAIL_TIMEOUT_MS);
+        }, 15000);
 
         video.src = url;
         video.muted = true;
         video.playsInline = true;
-        video.preload = "metadata";
+        video.preload = "auto";
 
-        video.onloadedmetadata = () => {
-            // Some browsers fail exactly at 0 → use tiny offset
-            video.currentTime = 0.01;
-        };
-
-        video.onseeked = async () => {
+        video.onloadeddata = async () => {
             try {
-                const canvas = document.createElement("canvas");
-
                 const maxSize = 300;
-                const scale = Math.min(
-                    maxSize / video.videoWidth,
-                    maxSize / video.videoHeight,
-                    1
-                );
+                const scale = Math.min(maxSize / video.videoWidth, maxSize / video.videoHeight, 1);
 
+                const canvas = document.createElement("canvas");
                 canvas.width = video.videoWidth * scale;
                 canvas.height = video.videoHeight * scale;
-
                 const ctx = canvas.getContext("2d");
                 if (!ctx) throw new Error("Failed to get canvas 2D context");
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-                const blob = await new Promise<Blob>((res, rej) =>
-                    canvas.toBlob((b) => b ? res(b) : rej(new Error("Canvas export failed")), "image/webp", 0.7)
-                );
+                const stream = (canvas as any).captureStream ? (canvas as any).captureStream(15) : (canvas as any).mozCaptureStream ? (canvas as any).mozCaptureStream(15) : null;
+                const mimeType = typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported('video/webm') ? 'video/webm' : 
+                                 typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported('video/mp4') ? 'video/mp4' : '';
 
-                const buffer = new Uint8Array(await blob.arrayBuffer());
-                settle(() => resolve(buffer));
+                const fallbackToStatic = () => {
+                    video.currentTime = 0.01;
+                    video.onseeked = async () => {
+                        try {
+                            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                            const blob = await new Promise<Blob>((res, rej) =>
+                                canvas.toBlob((b) => b ? res(b) : rej(new Error("Canvas export failed")), "image/webp", 0.7)
+                            );
+                            const buffer = new Uint8Array(await blob.arrayBuffer());
+                            settle(() => resolve(buffer));
+                        } catch (e) { settle(() => reject(e)); }
+                    };
+                };
+
+                if (!stream || !mimeType) {
+                    return fallbackToStatic();
+                }
+
+                const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 500000 });
+                const chunks: Blob[] = [];
+                recorder.ondataavailable = (e) => chunks.push(e.data);
+                recorder.onstop = async () => {
+                    const blob = new Blob(chunks, { type: mimeType });
+                    if (blob.size < 100) return fallbackToStatic();
+                    const buffer = new Uint8Array(await blob.arrayBuffer());
+                    settle(() => resolve(buffer));
+                };
+
+                recorder.start();
+
+                const fps = 15;
+                const durationToCapture = Math.min(2, video.duration || 2);
+                const frames = Math.floor(durationToCapture * fps);
+
+                for (let i = 0; i <= frames; i++) {
+                    if (settled) break;
+                    video.currentTime = i / fps;
+                    await new Promise(r => {
+                        video.onseeked = r;
+                        setTimeout(r, 300); // Failsafe if seek hangs
+                    });
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    await new Promise(r => setTimeout(r, 1000 / fps)); // Wait for MediaRecorder to capture it
+                }
+
+                if (!settled) {
+                    recorder.stop();
+                }
             } catch (err) {
                 settle(() => reject(err));
             }

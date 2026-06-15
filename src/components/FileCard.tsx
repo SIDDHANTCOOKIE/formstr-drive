@@ -35,12 +35,17 @@ function formatDate(timestamp: number): string {
   return new Date(timestamp).toLocaleDateString();
 }
 
-// Session-level preview cache: avoids re-fetching (and re-signing) when
-// navigating between folders. Keyed by previewHash → blob URL.
-const previewCache = new Map<string, string>();
+interface PreviewData {
+  url: string;
+  type: string;
+}
 
-async function getPreview(file: FileMetadata): Promise<string> {
-  if (!file.previewHash) return "";
+// Session-level preview cache: avoids re-fetching (and re-signing) when
+// navigating between folders. Keyed by previewHash → PreviewData.
+const previewCache = new Map<string, PreviewData>();
+
+async function getPreview(file: FileMetadata): Promise<PreviewData | null> {
+  if (!file.previewHash) return null;
 
   const cached = previewCache.get(file.previewHash);
   if (cached) return cached;
@@ -49,11 +54,23 @@ async function getPreview(file: FileMetadata): Promise<string> {
   const uint8arr = await client.download(file.previewHash);
   const ciphertext = new TextDecoder().decode(uint8arr as Uint8Array<ArrayBuffer>);
   const decrypted = await decryptFileWithKey(ciphertext, file.encryptionKey);
-  const blob = new Blob([decrypted as BlobPart], { type: "image/webp" });
-  const imageUrl = URL.createObjectURL(blob);
+  
+  const arr = new Uint8Array(decrypted as any);
+  let mimeType = "image/webp";
+  if (arr.length > 8) {
+      if (arr[0] === 0x1A && arr[1] === 0x45 && arr[2] === 0xDF && arr[3] === 0xA3) {
+          mimeType = "video/webm";
+      } else if (arr[4] === 0x66 && arr[5] === 0x74 && arr[6] === 0x79 && arr[7] === 0x70) {
+          mimeType = "video/mp4";
+      }
+  }
 
-  previewCache.set(file.previewHash, imageUrl);
-  return imageUrl;
+  const blob = new Blob([decrypted as BlobPart], { type: mimeType });
+  const imageUrl = URL.createObjectURL(blob);
+  const data = { url: imageUrl, type: mimeType };
+
+  previewCache.set(file.previewHash, data);
+  return data;
 }
 
 export function FileCard({
@@ -71,10 +88,23 @@ export function FileCard({
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [showPreview, setShowPreview] = useState(false);
+  const [showSizeToast, setShowSizeToast] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [previewloaded, setPreviewloaded] = useState(false);
-  const [preview, setPreview] = useState<string | null>(null);
+  const [preview, setPreview] = useState<PreviewData | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  const handleTileMouseEnter = () => {
+    videoRef.current?.play().catch(() => {});
+  };
+
+  const handleTileMouseLeave = () => {
+    if (videoRef.current) {
+      videoRef.current.pause();
+      videoRef.current.currentTime = 0;
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -90,9 +120,9 @@ export function FileCard({
     setPreview(null);
 
     getPreview(file)
-      .then((url) => {
+      .then((data) => {
         if (cancelled) return;
-        setPreview(url || null);
+        setPreview(data || null);
       })
       .catch(() => {
         if (cancelled) return;
@@ -209,6 +239,23 @@ export function FileCard({
     onToggleSelection?.(file.hash);
   };
 
+  const handlePreviewOpen = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (file.size > 5 * 1024 * 1024) {
+      setShowSizeToast(true);
+      setTimeout(() => setShowSizeToast(false), 3000);
+      return;
+    }
+    setShowPreview(true);
+  };
+
+  const sizeToast = showSizeToast && (
+    <div className="download-toast error-toast">
+      <span>File is too large to preview (over 5 MB). Please download it.</span>
+      <button className="download-toast-close" onClick={() => setShowSizeToast(false)}>×</button>
+    </div>
+  );
+
   const selectionControl = (
     <label
       className={`file-select ${viewMode === "grid" ? "file-select-tile" : "file-select-list"}`}
@@ -290,12 +337,27 @@ export function FileCard({
             onClick={() => setShowMenu(false)}
           />
         )}
-        <div className={`file-tile ${showMenu ? "menu-open" : ""} ${selected ? "selected" : ""}`}>
+        <div 
+          className={`file-tile ${showMenu ? "menu-open" : ""} ${selected ? "selected" : ""}`}
+          onMouseEnter={handleTileMouseEnter}
+          onMouseLeave={handleTileMouseLeave}
+        >
           {/* Preview area */}
           <div className={`file-tile-preview ${showMenu ? "menu-open" : ""}`}>
             {selectionControl}
             {hasPreview ? (
-              <img src={preview} alt={file.name} className="file-tile-img" />
+              preview?.type.startsWith("video/") ? (
+                <video
+                  ref={videoRef}
+                  src={preview.url}
+                  className="file-tile-img"
+                  muted
+                  loop
+                  playsInline
+                />
+              ) : (
+                <img src={preview!.url} alt={file.name} className="file-tile-img" />
+              )
             ) : null}
             <div
               className="file-tile-icon-fallback"
@@ -308,10 +370,7 @@ export function FileCard({
             <div className="file-tile-overlay">
               <button
                 className="tile-action-btn"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowPreview(true);
-                }}
+                onClick={handlePreviewOpen}
                 title="Preview"
               >
                 V
@@ -360,6 +419,7 @@ export function FileCard({
         {moveDialog}
         {renameModal}
         {downloadToast}
+        {sizeToast}
       </>
     );
   }
@@ -368,11 +428,25 @@ export function FileCard({
   return (
     <>
       {showMenu && <div className="file-menu-backdrop" onClick={() => setShowMenu(false)} />}
-      <div className={`file-card ${selected ? "selected" : ""}`}>
+      <div 
+        className={`file-card ${selected ? "selected" : ""}`}
+        onMouseEnter={handleTileMouseEnter}
+        onMouseLeave={handleTileMouseLeave}
+      >
         {selectionControl}
         {previewloaded && preview ? (
           <div className="file-icon" data-type={icon}>
-            <img src={preview} alt="" />
+            {preview.type.startsWith("video/") ? (
+              <video
+                ref={videoRef}
+                src={preview.url}
+                muted
+                loop
+                playsInline
+              />
+            ) : (
+              <img src={preview.url} alt="" />
+            )}
           </div>
         ) : (
           <div className="file-icon" data-type={icon}>
@@ -387,7 +461,7 @@ export function FileCard({
           <button className="action-btn" onClick={handleDownload} disabled={downloading} title="Download">
             {downloading ? "..." : "↓"}
           </button>
-          <button className="action-btn" onClick={() => setShowPreview(true)} title="Preview">
+          <button className="action-btn" onClick={handlePreviewOpen} title="Preview">
             V
           </button>
           <button className="action-btn menu-btn" onClick={() => setShowMenu(!showMenu)} title="More">
@@ -407,6 +481,7 @@ export function FileCard({
       {moveDialog}
       {renameModal}
       {downloadToast}
+      {sizeToast}
     </>
   );
 }
