@@ -1,6 +1,5 @@
 import React, { useState } from "react";
 import { decryptFileWithKey } from "../crypto";
-import { createAuthEvent } from "../auth";
 import { BlossomClient, BlossomError } from "../blossom";
 import { useBlossomServer } from "../hooks/useBlossomServer";
 
@@ -49,8 +48,7 @@ export const FileDownload: React.FC = () => {
 
     try {
       const client = new BlossomClient(selectedServer);
-      const auth = await createAuthEvent("get", `Get ${sha256}`, sha256);
-      const blob = await client.download(sha256, auth);
+      const blob = await client.download(sha256);
       const ciphertext = new TextDecoder().decode(blob);
       const decrypted = await decryptFileWithKey(ciphertext, privateKey);
       setContent(decrypted);

@@ -1,7 +1,8 @@
-import { SimplePool, type Filter } from "nostr-tools";
+import { SimplePool, nip44, type Filter } from "nostr-tools";
 import type { FileMetadata, NostrEvent } from "../types/metadata";
 import { signerManager } from "../signer/manager";
 import { APP_RELAYS } from "../utils/common";
+import { getDriveConversationKey } from "./driveKey";
 
 const METADATA_KIND = 34578;
 const CLIENT_TAG = "formstr-drive";
@@ -13,17 +14,27 @@ async function getSigner() {
 }
 
 async function encryptMetadata(metadata: FileMetadata): Promise<string> {
-  const signer = await getSigner();
-  if (!signer.nip44Encrypt) {
-    throw new Error("Signer does not support NIP-44 encryption");
-  }
-
-  const pubkey = await signer.getPublicKey();
+  const conversationKey = await getDriveConversationKey();
   const json = JSON.stringify(metadata);
-  return signer.nip44Encrypt(pubkey, json);
+  return nip44.v2.encrypt(json, conversationKey);
 }
 
-async function decryptMetadata(ciphertext: string): Promise<FileMetadata> {
+/**
+ * Decrypt metadata encrypted with the Drive Key (new format, tagged "t":"files").
+ */
+function decryptMetadataWithDriveKey(
+  ciphertext: string,
+  conversationKey: Uint8Array,
+): FileMetadata {
+  const json = nip44.v2.decrypt(ciphertext, conversationKey);
+  return JSON.parse(json);
+}
+
+/**
+ * Legacy fallback: decrypt metadata encrypted directly to the Main Identity Key.
+ * Used for events that do NOT carry the ["t", "files"] tag.
+ */
+async function decryptMetadataLegacy(ciphertext: string): Promise<FileMetadata> {
   const signer = await getSigner();
   if (!signer.nip44Decrypt) {
     throw new Error("Signer does not support NIP-44 decryption");
@@ -37,6 +48,17 @@ async function decryptMetadata(ciphertext: string): Promise<FileMetadata> {
 export async function fetchFileIndex(pubkey: string): Promise<FileMetadata[]> {
   console.log("[FileIndex] Starting fetch from relays:", RELAYS);
   console.log("[FileIndex] User pubkey:", pubkey);
+
+  // Proactively fetch / initialise the Drive Key before the relay timer starts.
+  // If this fails (e.g. signer unavailable), we fall back to legacy decryption
+  // for every event — exactly the same behaviour as before this change.
+  let driveConversationKey: Uint8Array | null = null;
+  try {
+    driveConversationKey = await getDriveConversationKey();
+    console.log("[FileIndex] Drive Key ready");
+  } catch (e) {
+    console.warn("[FileIndex] Could not obtain Drive Key, using legacy decryption", e);
+  }
 
   const pool = new SimplePool();
 
@@ -76,6 +98,7 @@ export async function fetchFileIndex(pubkey: string): Promise<FileMetadata[]> {
       pool.close(RELAYS);
 
       const files: FileMetadata[] = [];
+      const legacyFilesToMigrate: FileMetadata[] = [];
       const seenHashes = new Set<string>();
 
       // Sort by created_at descending to get latest versions first
@@ -91,6 +114,12 @@ export async function fetchFileIndex(pubkey: string): Promise<FileMetadata[]> {
           continue;
         }
 
+        // Skip the Drive Key event itself — it's not a file.
+        if (hash.startsWith("0:")) {
+          console.log("[FileIndex] Skipping Drive Key event:", event.id);
+          continue;
+        }
+
         if (seenHashes.has(hash)) {
           console.log("[FileIndex] Skipping duplicate hash:", hash);
           continue;
@@ -99,7 +128,22 @@ export async function fetchFileIndex(pubkey: string): Promise<FileMetadata[]> {
         seenHashes.add(hash);
 
         try {
-          const metadata = await decryptMetadata(event.content);
+          const hasFilesTag = event.tags.some(
+            (t: string[]) => t[0] === "t" && t[1] === "files",
+          );
+
+          let metadata: FileMetadata;
+          if (hasFilesTag && driveConversationKey) {
+            // New format: decrypt natively with the Drive Key (instant, no popup).
+            metadata = decryptMetadataWithDriveKey(event.content, driveConversationKey);
+          } else {
+            // Legacy format: fall back to the Main Identity Signer.
+            metadata = await decryptMetadataLegacy(event.content);
+            if (driveConversationKey && !metadata.deleted) {
+              legacyFilesToMigrate.push(metadata);
+            }
+          }
+
           console.log("[FileIndex] Decrypted metadata:", metadata);
           if (!metadata.deleted) {
             files.push(metadata);
@@ -113,8 +157,28 @@ export async function fetchFileIndex(pubkey: string): Promise<FileMetadata[]> {
 
       console.log(`[FileIndex] Successfully loaded ${files.length} files`);
       resolve(files);
+
+      // Trigger background auto-migration for any legacy files encountered
+      if (legacyFilesToMigrate.length > 0) {
+        autoMigrateLegacyFiles(legacyFilesToMigrate).catch((e) =>
+          console.error("[FileIndex] Auto-migration failed:", e),
+        );
+      }
     }, 10000); // 10 second timeout
   });
+}
+
+async function autoMigrateLegacyFiles(files: FileMetadata[]) {
+  console.log(`[FileIndex] Auto-migrating ${files.length} legacy files to Drive Key format...`);
+  for (const file of files) {
+    try {
+      // Re-saving encrypts with Drive Key and updates the relay event (replacing the legacy one)
+      await saveFileMetadata(file);
+      console.log(`[FileIndex] Auto-migrated: ${file.name}`);
+    } catch (e) {
+      console.error(`[FileIndex] Failed to auto-migrate file: ${file.name}`, e);
+    }
+  }
 }
 
 export async function saveFileMetadata(metadata: FileMetadata): Promise<void> {
@@ -133,6 +197,7 @@ export async function saveFileMetadata(metadata: FileMetadata): Promise<void> {
       created_at: Math.floor(Date.now() / 1000),
       tags: [
         ["d", metadata.hash],
+        ["t", "files"],
         ["client", CLIENT_TAG],
         ["encrypted", "nip44"],
       ],

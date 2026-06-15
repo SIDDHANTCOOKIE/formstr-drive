@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import type { FileMetadata } from "../types/metadata";
-import { createAuthEvent } from "../auth";
 import { BlossomClient } from "../blossom";
 import { decryptFileWithKey } from "../crypto";
 
@@ -106,8 +105,7 @@ export function FilePreviewModal({ file, onClose }: FilePreviewModalProps) {
 
       try {
         const client = new BlossomClient(file.server);
-        const auth = await createAuthEvent("get", `Preview ${file.hash}`);
-        const encryptedBytes = await client.download(file.hash, auth);
+        const encryptedBytes = await client.download(file.hash);
         const ciphertext = new TextDecoder().decode(encryptedBytes);
         const decryptedBytes = await decryptFileWithKey(ciphertext, file.encryptionKey);
 
