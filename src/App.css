@@ -2105,5 +2105,4 @@
 .download-toast-close:hover {
   color: #fff;
 }
-. e r r o r - t o a s t   {   b a c k g r o u n d :   v a r ( - - e r r o r )   ! i m p o r t a n t ;   c o l o r :   w h i t e   ! i m p o r t a n t ;   b o r d e r :   n o n e   ! i m p o r t a n t ;   }  
- 
+.error-toast { background: var(--error) !important; color: white !important; border: none !important; }

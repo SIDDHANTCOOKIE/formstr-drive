@@ -45,7 +45,10 @@ async function decryptMetadataLegacy(ciphertext: string): Promise<FileMetadata> 
   return JSON.parse(json);
 }
 
-export async function fetchFileIndex(pubkey: string): Promise<FileMetadata[]> {
+export async function fetchFileIndex(
+  pubkey: string,
+  onLegacyFilesFound?: (files: FileMetadata[]) => void
+): Promise<FileMetadata[]> {
   console.log("[FileIndex] Starting fetch from relays:", RELAYS);
   console.log("[FileIndex] User pubkey:", pubkey);
 
@@ -158,17 +161,15 @@ export async function fetchFileIndex(pubkey: string): Promise<FileMetadata[]> {
       console.log(`[FileIndex] Successfully loaded ${files.length} files`);
       resolve(files);
 
-      // Trigger background auto-migration for any legacy files encountered
-      if (legacyFilesToMigrate.length > 0) {
-        autoMigrateLegacyFiles(legacyFilesToMigrate).catch((e) =>
-          console.error("[FileIndex] Auto-migration failed:", e),
-        );
+      // Trigger callback for any legacy files encountered
+      if (legacyFilesToMigrate.length > 0 && onLegacyFilesFound) {
+        onLegacyFilesFound(legacyFilesToMigrate);
       }
     }, 10000); // 10 second timeout
   });
 }
 
-async function autoMigrateLegacyFiles(files: FileMetadata[]) {
+export async function autoMigrateLegacyFiles(files: FileMetadata[]) {
   console.log(`[FileIndex] Auto-migrating ${files.length} legacy files to Drive Key format...`);
   for (const file of files) {
     try {

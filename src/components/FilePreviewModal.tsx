@@ -2,51 +2,17 @@ import { useEffect, useState } from "react";
 import type { FileMetadata } from "../types/metadata";
 import { BlossomClient } from "../blossom";
 import { decryptFileWithKey } from "../crypto";
-
-type PreviewMode = "image" | "video" | "pdf" | "text" | "unsupported";
+import { resolvePreviewMode, MAX_PREVIEW_SIZE } from "../utils/fileTypeHelpers";
+import { canOpenInNostrDocs, openInNostrDocs } from "../utils/docsIntegrationHelpers";
 
 interface FilePreviewModalProps {
   file: FileMetadata;
   onClose: () => void;
 }
-
-function resolvePreviewMode(fileType: string): PreviewMode {
-  const normalizedType = fileType.toLowerCase();
-
-  if (normalizedType.startsWith("image/")) return "image";
-  if (normalizedType.startsWith("video/")) return "video";
-  if (normalizedType === "application/pdf") return "pdf";
-
-  if (
-    normalizedType.startsWith("text/") ||
-    normalizedType === "application/json" ||
-    normalizedType === "application/xml" ||
-    normalizedType === "application/javascript" ||
-    normalizedType === "application/x-javascript" ||
-    normalizedType === "application/yaml" ||
-    normalizedType === "application/x-yaml" ||
-    normalizedType === "text/markdown"
-  ) {
-    return "text";
-  }
-
-  return "unsupported";
-}
-
-function canOpenInNostrDocs(fileType: string, filename: string): boolean {
-  const normalizedType = fileType.toLowerCase();
-  const lowerName = filename.toLowerCase();
-
-  if (
-    normalizedType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-    normalizedType === "application/msword" ||
-    normalizedType === "application/vnd.oasis.opendocument.text"
-  ) {
-    return true;
-  }
-
-  return lowerName.endsWith(".docx") || lowerName.endsWith(".doc") || lowerName.endsWith(".odt");
-}
+import { ImagePreview } from "./preview/ImagePreview";
+import { VideoPreview } from "./preview/VideoPreview";
+import { PdfPreview } from "./preview/PdfPreview";
+import { TextPreview } from "./preview/TextPreview";
 
 export function FilePreviewModal({ file, onClose }: FilePreviewModalProps) {
   const [loading, setLoading] = useState(true);
@@ -58,35 +24,7 @@ export function FilePreviewModal({ file, onClose }: FilePreviewModalProps) {
   const mode = resolvePreviewMode(file.type);
   const supportsNostrDocsDeepLink = canOpenInNostrDocs(file.type, file.name);
 
-  const openInNostrDocs = () => {
-    const payload = {
-      server: file.server,
-      hash: file.hash,
-      encryptionKey: file.encryptionKey,
-      type: file.type,
-      name: file.name,
-    };
-    const encodedPayload = btoa(JSON.stringify(payload));
-    const url = `https://pages.formstr.app/drive-import?payload=${encodeURIComponent(encodedPayload)}`;
-    window.open(url, "_blank", "noopener,noreferrer");
-  };
 
-  const handleOpenInPages = async () => {
-    if (!textContent) return;
-
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(textContent);
-        setPagesHint("Document copied. Paste into Formstr Pages.");
-      } else {
-        setPagesHint("Opened Formstr Pages. Copy/paste is not available in this browser.");
-      }
-    } catch {
-      setPagesHint("Opened Formstr Pages. Clipboard permission was not granted.");
-    } finally {
-      window.open("https://pages.formstr.app/", "_blank", "noopener,noreferrer");
-    }
-  };
 
   useEffect(() => {
     let cancelled = false;
@@ -103,7 +41,7 @@ export function FilePreviewModal({ file, onClose }: FilePreviewModalProps) {
         return;
       }
 
-      if (file.size > 5 * 1024 * 1024) {
+      if (file.size > MAX_PREVIEW_SIZE) {
         setError("File is too large to preview (over 5 MB). Please download it to view.");
         setLoading(false);
         return;
@@ -168,7 +106,7 @@ export function FilePreviewModal({ file, onClose }: FilePreviewModalProps) {
               {supportsNostrDocsDeepLink && (
                 <>
                   <br />
-                  <button className="preview-open-docs-btn" onClick={openInNostrDocs}>
+                  <button className="preview-open-docs-btn" onClick={() => openInNostrDocs(file)}>
                     Open in Nostr Docs
                   </button>
                 </>
@@ -177,29 +115,19 @@ export function FilePreviewModal({ file, onClose }: FilePreviewModalProps) {
           )}
 
           {!loading && !error && mode === "image" && blobUrl && (
-            <img src={blobUrl} alt={file.name} className="preview-media-image" />
+            <ImagePreview blobUrl={blobUrl} name={file.name} />
           )}
 
           {!loading && !error && mode === "video" && blobUrl && (
-            <video src={blobUrl} className="preview-media-video" controls playsInline>
-              Your browser does not support this video format.
-            </video>
+            <VideoPreview blobUrl={blobUrl} />
           )}
 
           {!loading && !error && mode === "pdf" && blobUrl && (
-            <iframe src={blobUrl} className="preview-media-pdf" title={`PDF preview: ${file.name}`} />
+            <PdfPreview blobUrl={blobUrl} name={file.name} />
           )}
 
           {!loading && !error && mode === "text" && textContent !== null && (
-            <div className="preview-text-wrap">
-              <div className="preview-doc-actions">
-                <button className="preview-doc-btn" onClick={handleOpenInPages}>
-                  Open in Formstr Pages
-                </button>
-                {pagesHint && <span className="preview-doc-hint">{pagesHint}</span>}
-              </div>
-              <pre className="preview-text-content">{textContent}</pre>
-            </div>
+            <TextPreview textContent={textContent} pagesHint={pagesHint} setPagesHint={setPagesHint} />
           )}
         </div>
       </div>

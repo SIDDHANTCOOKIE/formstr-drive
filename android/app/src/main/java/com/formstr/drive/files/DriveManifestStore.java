@@ -532,6 +532,7 @@ public final class DriveManifestStore {
         public final long uploadedAt;
         public final String server;
         public final String encryptionKey;
+        @Nullable public final String previewHash;
         public final boolean isPendingImport;
         @Nullable public final String pendingImportId;
         @Nullable public final String localPath;
@@ -547,6 +548,7 @@ public final class DriveManifestStore {
                 long uploadedAt,
                 String server,
                 String encryptionKey,
+                @Nullable String previewHash,
                 boolean isPendingImport,
                 @Nullable String pendingImportId,
                 @Nullable String localPath
@@ -561,6 +563,7 @@ public final class DriveManifestStore {
             this.uploadedAt = uploadedAt;
             this.server = server;
             this.encryptionKey = encryptionKey;
+            this.previewHash = previewHash;
             this.isPendingImport = isPendingImport;
             this.pendingImportId = pendingImportId;
             this.localPath = localPath;
@@ -580,6 +583,7 @@ public final class DriveManifestStore {
             long uploadedAt = jsonObject.optLong("uploadedAt", 0L);
             String server = jsonObject.optString("server");
             String encryptionKey = jsonObject.optString("encryptionKey");
+            String previewHash = jsonObject.has("previewHash") ? jsonObject.optString("previewHash") : null;
 
             return new FileEntry(
                     id,
@@ -592,6 +596,7 @@ public final class DriveManifestStore {
                     uploadedAt,
                     server,
                     encryptionKey,
+                    previewHash,
                     false,
                     null,
                     null
@@ -610,6 +615,7 @@ public final class DriveManifestStore {
                     entry.createdAt,
                     "",
                     "",
+                    null,
                     true,
                     entry.id,
                     entry.localPath

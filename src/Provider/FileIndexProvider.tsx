@@ -12,7 +12,9 @@ import {
   saveFileMetadata,
   deleteFileMetadata,
   extractFolders,
+  autoMigrateLegacyFiles,
 } from "../services/fileIndex";
+import { MigrationPromptModal } from "../components/MigrationPromptModal";
 import { encryptFileWithKey, encryptFileWithExistingKey } from "../crypto";
 import { createAuthEvent } from "../auth";
 import { BlossomClient } from "../blossom";
@@ -71,6 +73,7 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
   const [customFolders, setCustomFolders] = useState<string[]>([]);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [hasHydratedIndex, setHasHydratedIndex] = useState(false);
+  const [legacyFiles, setLegacyFiles] = useState<FileMetadata[]>([]);
   const processingPendingImportsRef = useRef(false);
 
   const foldersFromFiles = extractFolders(files);
@@ -119,7 +122,9 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     setError(null);
     try {
-      const index = await fetchFileIndex(pubkey);
+      const index = await fetchFileIndex(pubkey, (foundLegacyFiles) => {
+        setLegacyFiles(foundLegacyFiles);
+      });
       setFiles(index);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load files");
@@ -410,6 +415,15 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
     };
   }, [hasHydratedIndex, isSignedIn, processPendingImports, restoring]);
 
+  const handleAcceptMigration = async () => {
+    await autoMigrateLegacyFiles(legacyFiles);
+    setLegacyFiles([]);
+  };
+
+  const handleDismissMigration = () => {
+    setLegacyFiles([]);
+  };
+
   return (
     <FileIndexContext.Provider
       value={{
@@ -431,6 +445,11 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
         refresh,
       }}
     >
+      <MigrationPromptModal 
+        files={legacyFiles} 
+        onAccept={handleAcceptMigration} 
+        onDismiss={handleDismissMigration} 
+      />
       {children}
     </FileIndexContext.Provider>
   );

@@ -6,6 +6,7 @@ import { BlossomClient } from "../blossom";
 import { saveFileToDownloads, openDownloadedFile } from "../native/driveManifest";
 import { isNativePlatform } from "../utils/platform";
 import { FilePreviewModal } from "./FilePreviewModal";
+import { detectMimeTypeFromMagicBytes, getFileIcon } from "../utils/fileTypeHelpers";
 
 interface FileCardProps {
   file: FileMetadata;
@@ -14,15 +15,7 @@ interface FileCardProps {
   onToggleSelection?: (hash: string) => void;
 }
 
-function getFileIcon(type: string): string {
-  if (type.startsWith("image/")) return "img";
-  if (type.startsWith("video/")) return "vid";
-  if (type.startsWith("audio/")) return "aud";
-  if (type === "application/pdf") return "pdf";
-  if (type.includes("zip") || type.includes("archive")) return "zip";
-  if (type.includes("text") || type.includes("json")) return "txt";
-  return "file";
-}
+
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return bytes + " B";
@@ -56,14 +49,7 @@ async function getPreview(file: FileMetadata): Promise<PreviewData | null> {
   const decrypted = await decryptFileWithKey(ciphertext, file.encryptionKey);
   
   const arr = new Uint8Array(decrypted as any);
-  let mimeType = "image/webp";
-  if (arr.length > 8) {
-      if (arr[0] === 0x1A && arr[1] === 0x45 && arr[2] === 0xDF && arr[3] === 0xA3) {
-          mimeType = "video/webm";
-      } else if (arr[4] === 0x66 && arr[5] === 0x74 && arr[6] === 0x79 && arr[7] === 0x70) {
-          mimeType = "video/mp4";
-      }
-  }
+  const mimeType = detectMimeTypeFromMagicBytes(arr) || "image/webp";
 
   const blob = new Blob([decrypted as BlobPart], { type: mimeType });
   const imageUrl = URL.createObjectURL(blob);
@@ -88,7 +74,7 @@ export function FileCard({
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [showPreview, setShowPreview] = useState(false);
-  const [showSizeToast, setShowSizeToast] = useState(false);
+
   const [error, setError] = useState<string | null>(null);
   const [previewloaded, setPreviewloaded] = useState(false);
   const [preview, setPreview] = useState<PreviewData | null>(null);
@@ -239,22 +225,8 @@ export function FileCard({
     onToggleSelection?.(file.hash);
   };
 
-  const handlePreviewOpen = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (file.size > 5 * 1024 * 1024) {
-      setShowSizeToast(true);
-      setTimeout(() => setShowSizeToast(false), 3000);
-      return;
-    }
-    setShowPreview(true);
-  };
 
-  const sizeToast = showSizeToast && (
-    <div className="download-toast error-toast">
-      <span>File is too large to preview (over 5 MB). Please download it.</span>
-      <button className="download-toast-close" onClick={() => setShowSizeToast(false)}>×</button>
-    </div>
-  );
+
 
   const selectionControl = (
     <label
@@ -370,10 +342,15 @@ export function FileCard({
             <div className="file-tile-overlay">
               <button
                 className="tile-action-btn"
-                onClick={handlePreviewOpen}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowPreview(true);
+                }}
                 title="Preview"
               >
-                V
+                <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor" style={{ pointerEvents: "none" }}>
+                  <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zm0 12.5c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
+                </svg>
               </button>
               <button
                 className="tile-action-btn"
@@ -412,14 +389,12 @@ export function FileCard({
             <span className="file-tile-name" title={file.name}>{file.name}</span>
             <span className="file-tile-meta">{formatSize(file.size)} · {formatDate(file.uploadedAt)}</span>
           </div>
-
           {error && <div className="file-error">{error}</div>}
         </div>
         {showPreview && <FilePreviewModal file={file} onClose={() => setShowPreview(false)} />}
         {moveDialog}
         {renameModal}
         {downloadToast}
-        {sizeToast}
       </>
     );
   }
@@ -461,8 +436,17 @@ export function FileCard({
           <button className="action-btn" onClick={handleDownload} disabled={downloading} title="Download">
             {downloading ? "..." : "↓"}
           </button>
-          <button className="action-btn" onClick={handlePreviewOpen} title="Preview">
-            V
+          <button 
+            className="action-btn" 
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowPreview(true);
+            }} 
+            title="Preview"
+          >
+            <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor" style={{ pointerEvents: "none" }}>
+              <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zm0 12.5c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
+            </svg>
           </button>
           <button className="action-btn menu-btn" onClick={() => setShowMenu(!showMenu)} title="More">
             ⋮
@@ -481,7 +465,6 @@ export function FileCard({
       {moveDialog}
       {renameModal}
       {downloadToast}
-      {sizeToast}
     </>
   );
 }
