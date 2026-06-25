@@ -14,15 +14,28 @@ import type { NostrEvent } from "../types/metadata";
 const METADATA_KIND = 34578;
 const RELAYS = APP_RELAYS;
 
-// In-memory cache — the decrypted key ONLY lives here, never in persistent storage.
-let cachedConversationKey: Uint8Array | null = null;
+// A single decrypted Drive Key: the secp256k1 secret plus its derived
+// conversation key (used directly by NIP-44 v2). Keeping the secret hex lets us
+// re-encrypt with it when saving new file metadata.
+interface DriveKeyEntry {
+  secretKeyHex: string;
+  conversationKey: Uint8Array;
+}
+
+// In-memory cache — the decrypted keys ONLY live here, never in persistent storage.
+let cachedKeyring: DriveKeyEntry[] | null = null;
 let cachedPubkey: string | null = null;
+
+// The hex of the newest Drive Key secret — used when encrypting new file
+// metadata so that all new uploads share a single, consistent key.
+let activeSecretKeyHex: string | null = null;
 
 // Clear the in-memory and localStorage caches when the user logs out.
 signerManager.onChange((pubkey) => {
   if (!pubkey) {
-    cachedConversationKey = null;
+    cachedKeyring = null;
     cachedPubkey = null;
+    activeSecretKeyHex = null;
     void removeStoredItem(STORAGE_KEYS.DRIVE_KEY_CACHE);
   }
 });
@@ -31,117 +44,82 @@ function getDriveKeyDTag(pubkey: string): string {
   return `0:${pubkey}`;
 }
 
-/**
- * Get the Drive Key conversation key, initialising a new keypair if needed.
- *
- * This is the single public entry-point consumed by fileIndex.ts.
- * At most ONE signer prompt is triggered per browser session — after that the
- * conversation key is served from the in-memory cache.
- */
-export async function getDriveConversationKey(): Promise<Uint8Array> {
-  const signer = await signerManager.getSigner();
-  const pubkey = await signer.getPublicKey();
-
-  // 1. Fast-path: in-memory cache for the current user.
-  if (cachedConversationKey && cachedPubkey === pubkey) {
-    return cachedConversationKey;
-  }
-
-  // 2. Try to restore from the locally-cached encrypted event payload.
-  //    This avoids a relay round-trip on page reload — the signer decrypts
-  //    the cached ciphertext instantly (if "always allow" is enabled).
-  const cachedEncryptedContent = await getStoredItem<string | null>(
-    STORAGE_KEYS.DRIVE_KEY_CACHE,
-    null,
-  );
-
-  if (cachedEncryptedContent) {
-    try {
-      const conversationKey = await decryptDriveKeyPayload(
-        cachedEncryptedContent,
-        signer,
-        pubkey,
-      );
-      cachedConversationKey = conversationKey;
-      cachedPubkey = pubkey;
-      console.log("[DriveKey] Restored from local cache");
-      return conversationKey;
-    } catch (e) {
-      // Cache belongs to a different user or is corrupt — discard it.
-      console.warn("[DriveKey] Cached payload unusable, fetching from relay", e);
-      await removeStoredItem(STORAGE_KEYS.DRIVE_KEY_CACHE);
-    }
-  }
-
-  // 3. Fetch the Drive Key event from relays.
-  const event = await fetchDriveKeyEvent(pubkey);
-
-  if (event) {
-    try {
-      const conversationKey = await decryptDriveKeyPayload(
-        event.content,
-        signer,
-        pubkey,
-      );
-      cachedConversationKey = conversationKey;
-      cachedPubkey = pubkey;
-      // Persist the raw *encrypted* payload — NOT the decrypted key.
-      await setStoredItem(STORAGE_KEYS.DRIVE_KEY_CACHE, event.content);
-      console.log("[DriveKey] Fetched from relay and cached");
-      return conversationKey;
-    } catch (e) {
-      console.error("[DriveKey] Failed to decrypt relay event", e);
-    }
-  }
-
-  // 4. No Drive Key exists yet — generate, publish, and cache a new one.
-  return initializeDriveKey(signer, pubkey);
+function buildConversationKey(secretKeyHex: string): Uint8Array {
+  const secretKey = hexToBytes(secretKeyHex);
+  const drivePublicKey = getPublicKey(secretKey);
+  return nip44.v2.utils.getConversationKey(secretKey, drivePublicKey);
 }
 
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
+/**
+ * Decrypt a single Drive Key payload (array-of-tags form) into its secret hex.
+ * Returns null if the payload is malformed or can't be decrypted.
+ */
 async function decryptDriveKeyPayload(
   encryptedContent: string,
   signer: Awaited<ReturnType<typeof signerManager.getSigner>>,
   pubkey: string,
-): Promise<Uint8Array> {
+): Promise<string | null> {
   if (!signer.nip44Decrypt) {
     throw new Error("Signer does not support NIP-44 decryption");
   }
 
   const json = await signer.nip44Decrypt(pubkey, encryptedContent);
-  const tags: string[][] = JSON.parse(json);
-  const encKeyTag = tags.find((t) => t[0] === "encryptionKey");
 
-  if (!encKeyTag?.[1]) {
-    throw new Error("Drive Key payload missing encryptionKey tag");
+  let tags: unknown;
+  try {
+    tags = JSON.parse(json);
+  } catch {
+    return null;
   }
 
-  const secretKey = hexToBytes(encKeyTag[1]);
-  const drivePublicKey = getPublicKey(secretKey);
-  return nip44.v2.utils.getConversationKey(secretKey, drivePublicKey);
+  if (!Array.isArray(tags)) {
+    return null;
+  }
+
+  const encKeyTag = tags.find(
+    (t): t is string[] =>
+      Array.isArray(t) && t.length >= 2 && t[0] === "encryptionKey",
+  );
+
+  if (!encKeyTag?.[1]) {
+    return null;
+  }
+
+  // Validate it looks like a 32-byte hex secret before trusting it.
+  const secretKeyHex = encKeyTag[1];
+  if (!/^[0-9a-fA-F]{64}$/.test(secretKeyHex)) {
+    return null;
+  }
+
+  return secretKeyHex;
 }
 
-async function fetchDriveKeyEvent(pubkey: string): Promise<NostrEvent | null> {
+/**
+ * Collect every Drive Key event for the user across all relays.
+ *
+ * Drive Keys are immutable per-identity events (d = "0:<pubkey>"), but a device
+ * that loses the relay race will publish a brand-new random key, forking the
+ * keyring. Because each historical key may still unlock files encrypted under
+ * it, we keep ALL of them — newest first.
+ */
+async function fetchDriveKeyEvents(pubkey: string): Promise<NostrEvent[]> {
   const pool = new SimplePool();
-  const dTag = getDriveKeyDTag(pubkey);
 
   return new Promise((resolve) => {
     let resolved = false;
-    let found: NostrEvent | null = null;
+    const found = new Map<string, NostrEvent>();
 
     const filter: Filter = {
       kinds: [METADATA_KIND],
       authors: [pubkey],
-      "#d": [dTag],
+      "#d": [getDriveKeyDTag(pubkey)],
     };
 
     const sub = pool.subscribeMany(RELAYS, filter, {
       onevent(event) {
-        if (!found || event.created_at > found.created_at) {
-          found = event as unknown as NostrEvent;
+        // Keep the newest version of each unique event id.
+        if (!found.has(event.id)) {
+          found.set(event.id, event as unknown as NostrEvent);
         }
       },
       oneose() {
@@ -149,27 +127,174 @@ async function fetchDriveKeyEvent(pubkey: string): Promise<NostrEvent | null> {
           resolved = true;
           sub.close();
           pool.close(RELAYS);
-          resolve(found);
+          resolve(sortNewestFirst([...found.values()]));
         }
       },
     });
 
-    // Safety timeout — don't hang forever if relays are unresponsive.
+    // Safety timeout — give flaky mobile relays a generous window instead of
+    // giving up so fast that we mint a duplicate key (the original fork cause).
     setTimeout(() => {
       if (!resolved) {
         resolved = true;
         sub.close();
         pool.close(RELAYS);
-        resolve(found);
+        resolve(sortNewestFirst([...found.values()]));
       }
-    }, 5000);
+    }, 8000);
   });
+}
+
+function sortNewestFirst(events: NostrEvent[]): NostrEvent[] {
+  return [...events].sort((a, b) => b.created_at - a.created_at);
+}
+
+/**
+ * Build the full Drive Key keyring for the current user.
+ *
+ * This fetches every Drive Key event the user has ever published and decrypts
+ * each one. Any of them may unlock older files, so the caller should try every
+ * key when decrypting file metadata. Returns an empty array only if the signer
+ * cannot decrypt anything at all.
+ */
+export async function getDriveKeyring(): Promise<DriveKeyEntry[]> {
+  // 1. Fast-path: in-memory cache for the current user.
+  if (cachedKeyring && cachedPubkey) {
+    return cachedKeyring;
+  }
+
+  const signer = await signerManager.getSigner();
+  const pubkey = await signer.getPublicKey();
+
+  const keyring: DriveKeyEntry[] = [];
+  const seenSecrets = new Set<string>();
+
+  // Helper that decrypts an encrypted payload and dedupes by secret.
+  const tryAdd = async (encryptedContent: string) => {
+    try {
+      const secretKeyHex = await decryptDriveKeyPayload(
+        encryptedContent,
+        signer,
+        pubkey,
+      );
+      if (secretKeyHex && !seenSecrets.has(secretKeyHex)) {
+        seenSecrets.add(secretKeyHex);
+        keyring.push({
+          secretKeyHex,
+          conversationKey: buildConversationKey(secretKeyHex),
+        });
+      }
+    } catch (e) {
+      console.warn("[DriveKey] Failed to decrypt a Drive Key payload", e);
+    }
+  };
+
+  // 2. Restore from the locally-cached encrypted payloads (avoids a relay round
+  //    trip on reload). The cache may hold several historic payloads.
+  const cachedContents = await getStoredItem<string[] | null>(
+    STORAGE_KEYS.DRIVE_KEY_CACHE,
+    null,
+  );
+  if (Array.isArray(cachedContents)) {
+    for (const content of cachedContents) {
+      if (typeof content === "string") {
+        await tryAdd(content);
+      }
+    }
+    if (keyring.length > 0) {
+      console.log(`[DriveKey] Restored ${keyring.length} key(s) from local cache`);
+    }
+  }
+
+  // 3. Fetch every Drive Key event from relays. This both picks up keys we don't
+  //    have cached locally and reconciles forks across devices.
+  const events = await fetchDriveKeyEvents(pubkey);
+  for (const event of events) {
+    await tryAdd(event.content);
+  }
+
+  // 4. If no key exists anywhere, generate one. This is the only time we ever
+  //    create a key, and we only do it after genuinely finding nothing across
+  //    the cache AND all relays — so forks can't happen from a lost race.
+  if (keyring.length === 0) {
+    const newEntry = await initializeDriveKey(signer, pubkey);
+    keyring.push(newEntry);
+  }
+
+  // Default active key: the first in the keyring. `events` is newest-first and
+  // we decrypt in that order, so this is the most recently published key — the
+  // one new uploads should continue to use to avoid forking again.
+  activeSecretKeyHex = keyring[0]?.secretKeyHex ?? null;
+
+  cachedKeyring = keyring;
+  cachedPubkey = pubkey;
+
+  // Persist the raw *encrypted* payloads (from relays) so the next cold start
+  // can rebuild the keyring without hitting the network.
+  const encryptedPayloads = events.map((e) => e.content);
+  if (encryptedPayloads.length > 0) {
+    await setStoredItem(STORAGE_KEYS.DRIVE_KEY_CACHE, encryptedPayloads);
+  }
+
+  console.log(`[DriveKey] Keyring ready with ${keyring.length} key(s)`);
+  return keyring;
+}
+
+/**
+ * The conversation keys for every Drive Key. Try each one when decrypting file
+ * metadata until the NIP-44 MAC validates.
+ */
+export async function getDriveConversationKeys(): Promise<Uint8Array[]> {
+  const keyring = await getDriveKeyring();
+  return keyring.map((entry) => entry.conversationKey);
+}
+
+/**
+ * The conversation key for the *active* (newest) Drive Key — used to encrypt
+ * new file metadata so all fresh uploads share one consistent key.
+ */
+export async function getDriveConversationKey(): Promise<Uint8Array> {
+  const keyring = await getDriveKeyring();
+  if (keyring.length === 0) {
+    throw new Error("No Drive Key available");
+  }
+
+  // Reuse the cached active secret if present; otherwise default to the first.
+  const activeSecret =
+    activeSecretKeyHex && keyring.some((k) => k.secretKeyHex === activeSecretKeyHex)
+      ? activeSecretKeyHex
+      : keyring[0]!.secretKeyHex;
+  activeSecretKeyHex = activeSecret;
+
+  const active = keyring.find((k) => k.secretKeyHex === activeSecret);
+  if (!active) {
+    throw new Error("No Drive Key available");
+  }
+  return active.conversationKey;
+}
+
+/**
+ * The active Drive Key's secret, as raw hex. Needed by fileIndex.ts so it can
+ * re-encrypt metadata with the same key during migration/edits.
+ */
+export async function getActiveDriveKeySecret(): Promise<string> {
+  const keyring = await getDriveKeyring();
+  if (keyring.length === 0) {
+    throw new Error("No Drive Key available");
+  }
+
+  const activeSecret =
+    activeSecretKeyHex && keyring.some((k) => k.secretKeyHex === activeSecretKeyHex)
+      ? activeSecretKeyHex
+      : keyring[0]!.secretKeyHex;
+  activeSecretKeyHex = activeSecret;
+  return activeSecret;
 }
 
 async function initializeDriveKey(
   signer: Awaited<ReturnType<typeof signerManager.getSigner>>,
   pubkey: string,
-): Promise<Uint8Array> {
+): Promise<DriveKeyEntry> {
   if (!signer.nip44Encrypt) {
     throw new Error("Signer does not support NIP-44 encryption");
   }
@@ -178,10 +303,10 @@ async function initializeDriveKey(
 
   // Generate a fresh secp256k1 keypair.
   const secretKey = generateSecretKey();
-  const drivePublicKey = getPublicKey(secretKey);
+  const secretKeyHex = bytesToHex(secretKey);
 
   // Payload format matches the spec: array-of-tags.
-  const payload = JSON.stringify([["encryptionKey", bytesToHex(secretKey)]]);
+  const payload = JSON.stringify([["encryptionKey", secretKeyHex]]);
 
   // Encrypt the payload to the user themselves using their Main Identity Signer.
   const encryptedContent = await signer.nip44Encrypt(pubkey, payload);
@@ -209,13 +334,9 @@ async function initializeDriveKey(
     pool.close(RELAYS);
   }
 
-  // Cache the encrypted payload locally (never the naked key).
-  await setStoredItem(STORAGE_KEYS.DRIVE_KEY_CACHE, encryptedContent);
-
-  // Cache the conversation key in memory for the rest of this session.
-  const conversationKey = nip44.v2.utils.getConversationKey(secretKey, drivePublicKey);
-  cachedConversationKey = conversationKey;
-  cachedPubkey = pubkey;
-
-  return conversationKey;
+  activeSecretKeyHex = secretKeyHex;
+  return {
+    secretKeyHex,
+    conversationKey: buildConversationKey(secretKeyHex),
+  };
 }

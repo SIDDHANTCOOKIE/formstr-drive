@@ -2,7 +2,10 @@ import { SimplePool, nip44, type Filter } from "nostr-tools";
 import type { FileMetadata, NostrEvent } from "../types/metadata";
 import { signerManager } from "../signer/manager";
 import { APP_RELAYS } from "../utils/common";
-import { getDriveConversationKey } from "./driveKey";
+import {
+  getDriveConversationKey,
+  getDriveConversationKeys,
+} from "./driveKey";
 
 const METADATA_KIND = 34578;
 const CLIENT_TAG = "formstr-drive";
@@ -20,14 +23,27 @@ async function encryptMetadata(metadata: FileMetadata): Promise<string> {
 }
 
 /**
- * Decrypt metadata encrypted with the Drive Key (new format, tagged "t":"files").
+ * Decrypt metadata by trying every Drive Key in the keyring until one
+ * validates the NIP-44 MAC. This recovers files encrypted under an older
+ * (forked) key that isn't the active one.
  */
 function decryptMetadataWithDriveKey(
   ciphertext: string,
-  conversationKey: Uint8Array,
+  conversationKeys: Uint8Array[],
 ): FileMetadata {
-  const json = nip44.v2.decrypt(ciphertext, conversationKey);
-  return JSON.parse(json);
+  let lastError: unknown = null;
+
+  for (const conversationKey of conversationKeys) {
+    try {
+      const json = nip44.v2.decrypt(ciphertext, conversationKey);
+      return JSON.parse(json);
+    } catch (e) {
+      // invalid MAC — wrong key, try the next one in the keyring.
+      lastError = e;
+    }
+  }
+
+  throw lastError ?? new Error("No Drive Key available to decrypt metadata");
 }
 
 /**
@@ -52,15 +68,16 @@ export async function fetchFileIndex(
   console.log("[FileIndex] Starting fetch from relays:", RELAYS);
   console.log("[FileIndex] User pubkey:", pubkey);
 
-  // Proactively fetch / initialise the Drive Key before the relay timer starts.
-  // If this fails (e.g. signer unavailable), we fall back to legacy decryption
-  // for every event — exactly the same behaviour as before this change.
-  let driveConversationKey: Uint8Array | null = null;
+  // Proactively fetch the full Drive Key keyring before the relay timer starts.
+  // Every key the user has ever published may unlock files encrypted under it,
+  // so we keep them ALL and try each when decrypting. If this fails (e.g. signer
+  // unavailable), we fall back to legacy decryption for every event.
+  let driveConversationKeys: Uint8Array[] = [];
   try {
-    driveConversationKey = await getDriveConversationKey();
-    console.log("[FileIndex] Drive Key ready");
+    driveConversationKeys = await getDriveConversationKeys();
+    console.log(`[FileIndex] Drive Key keyring ready (${driveConversationKeys.length} key(s))`);
   } catch (e) {
-    console.warn("[FileIndex] Could not obtain Drive Key, using legacy decryption", e);
+    console.warn("[FileIndex] Could not obtain Drive Key keyring, using legacy decryption", e);
   }
 
   const pool = new SimplePool();
@@ -136,13 +153,22 @@ export async function fetchFileIndex(
           );
 
           let metadata: FileMetadata;
-          if (hasFilesTag && driveConversationKey) {
-            // New format: decrypt natively with the Drive Key (instant, no popup).
-            metadata = decryptMetadataWithDriveKey(event.content, driveConversationKey);
+          if (hasFilesTag && driveConversationKeys.length > 0) {
+            // New format: try every Drive Key in the keyring until one decrypts.
+            try {
+              metadata = decryptMetadataWithDriveKey(event.content, driveConversationKeys);
+            } catch {
+              // No Drive Key worked (e.g. the event predates Drive Keys entirely,
+              // or was encrypted to the Main Identity Key). Fall back to legacy.
+              metadata = await decryptMetadataLegacy(event.content);
+              if (!metadata.deleted) {
+                legacyFilesToMigrate.push(metadata);
+              }
+            }
           } else {
             // Legacy format: fall back to the Main Identity Signer.
             metadata = await decryptMetadataLegacy(event.content);
-            if (driveConversationKey && !metadata.deleted) {
+            if (driveConversationKeys.length > 0 && !metadata.deleted) {
               legacyFilesToMigrate.push(metadata);
             }
           }
