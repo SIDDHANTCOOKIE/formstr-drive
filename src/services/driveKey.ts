@@ -217,8 +217,14 @@ export async function getDriveKeyring(): Promise<DriveKeyEntry[]> {
   //    create a key, and we only do it after genuinely finding nothing across
   //    the cache AND all relays — so forks can't happen from a lost race.
   if (keyring.length === 0) {
-    const newEntry = await initializeDriveKey(signer, pubkey);
-    keyring.push(newEntry);
+    const confirmMessage =
+      "Drive key not found in relays. Do you want to create a new key?\n\nWARNING: If you were using drive before and are creating a new key, all data encrypted using the old key may be lost.";
+    if (window.confirm(confirmMessage)) {
+      const newEntry = await initializeDriveKey(signer, pubkey);
+      keyring.push(newEntry);
+    } else {
+      throw new Error("User cancelled drive key creation.");
+    }
   }
 
   // Default active key: the first in the keyring. `events` is newest-first and
