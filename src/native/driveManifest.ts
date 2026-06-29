@@ -41,6 +41,7 @@ export interface NativeDriveFileEntry {
   uploadedAt: number;
   server: string;
   encryptionKey: string;
+  previewHash?: string;
 }
 
 export interface NativeDriveManifest {
@@ -187,6 +188,7 @@ export function buildNativeDriveManifest(
       uploadedAt: file.uploadedAt,
       server: file.server,
       encryptionKey: file.encryptionKey,
+      ...(file.previewHash ? { previewHash: file.previewHash } : {}),
     };
   });
 

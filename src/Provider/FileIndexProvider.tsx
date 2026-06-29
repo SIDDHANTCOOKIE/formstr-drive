@@ -12,7 +12,9 @@ import {
   saveFileMetadata,
   deleteFileMetadata,
   extractFolders,
+  autoMigrateLegacyFiles,
 } from "../services/fileIndex";
+import { MigrationPromptModal } from "../components/MigrationPromptModal";
 import { encryptFileWithKey, encryptFileWithExistingKey } from "../crypto";
 import { createAuthEvent } from "../auth";
 import { BlossomClient } from "../blossom";
@@ -71,6 +73,7 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
   const [customFolders, setCustomFolders] = useState<string[]>([]);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [hasHydratedIndex, setHasHydratedIndex] = useState(false);
+  const [legacyFiles, setLegacyFiles] = useState<FileMetadata[]>([]);
   const processingPendingImportsRef = useRef(false);
 
   const foldersFromFiles = extractFolders(files);
@@ -119,7 +122,9 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     setError(null);
     try {
-      const index = await fetchFileIndex(pubkey);
+      const index = await fetchFileIndex(pubkey, (foundLegacyFiles) => {
+        setLegacyFiles(foundLegacyFiles);
+      });
       setFiles(index);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load files");
@@ -171,6 +176,13 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
 
       try {
         setUploadProgress({ fileName: file.name, stage: "Reading file..." });
+        
+        // Start generating preview immediately in the background
+        const previewPromise = previewFile(file).catch((e) => {
+          console.warn("Background preview generation failed", e);
+          return null;
+        });
+
         const bytes = new Uint8Array(await file.arrayBuffer());
 
         setUploadProgress({ fileName: file.name, stage: "Encrypting..." });
@@ -183,14 +195,17 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
         const hash = await client.upload(encryptedBytes, auth);
 
         let previewHash: string | undefined;
-        const preview = await previewFile(file);
+        
+        // Wait for preview if it's not done yet
+        const preview = await previewPromise;
+        
         if (preview) {
           setUploadProgress({ fileName: file.name, stage: "Uploading preview..." });
           const encrypted = await encryptFileWithExistingKey(preview, privateKeyHex);
           const encryptedPreviewBytes = new TextEncoder().encode(encrypted);
           const previewAuth = await createAuthEvent(
             "upload",
-            "Upload preview image",
+            "Upload file preview",
             encryptedPreviewBytes,
           );
           previewHash = await client.upload(encryptedPreviewBytes, previewAuth);
@@ -400,6 +415,15 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
     };
   }, [hasHydratedIndex, isSignedIn, processPendingImports, restoring]);
 
+  const handleAcceptMigration = async () => {
+    await autoMigrateLegacyFiles(legacyFiles);
+    setLegacyFiles([]);
+  };
+
+  const handleDismissMigration = () => {
+    setLegacyFiles([]);
+  };
+
   return (
     <FileIndexContext.Provider
       value={{
@@ -421,6 +445,11 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
         refresh,
       }}
     >
+      <MigrationPromptModal 
+        files={legacyFiles} 
+        onAccept={handleAcceptMigration} 
+        onDismiss={handleDismissMigration} 
+      />
       {children}
     </FileIndexContext.Provider>
   );

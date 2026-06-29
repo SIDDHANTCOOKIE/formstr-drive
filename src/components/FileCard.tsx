@@ -2,10 +2,11 @@ import { useState, useEffect, useRef } from "react";
 import type { FileMetadata } from "../types/metadata";
 import { useFileIndex } from "../hooks/useFileContext";
 import { decryptFileWithKey } from "../crypto";
-import { createAuthEvent } from "../auth";
 import { BlossomClient } from "../blossom";
 import { saveFileToDownloads, openDownloadedFile } from "../native/driveManifest";
 import { isNativePlatform } from "../utils/platform";
+import { FilePreviewModal } from "./FilePreviewModal";
+import { detectMimeTypeFromMagicBytes, getFileIcon } from "../utils/fileTypeHelpers";
 
 interface FileCardProps {
   file: FileMetadata;
@@ -14,15 +15,7 @@ interface FileCardProps {
   onToggleSelection?: (hash: string) => void;
 }
 
-function getFileIcon(type: string): string {
-  if (type.startsWith("image/")) return "img";
-  if (type.startsWith("video/")) return "vid";
-  if (type.startsWith("audio/")) return "aud";
-  if (type === "application/pdf") return "pdf";
-  if (type.includes("zip") || type.includes("archive")) return "zip";
-  if (type.includes("text") || type.includes("json")) return "txt";
-  return "file";
-}
+
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return bytes + " B";
@@ -35,26 +28,35 @@ function formatDate(timestamp: number): string {
   return new Date(timestamp).toLocaleDateString();
 }
 
-// Session-level preview cache: avoids re-fetching (and re-signing) when
-// navigating between folders. Keyed by previewHash → blob URL.
-const previewCache = new Map<string, string>();
+interface PreviewData {
+  url: string;
+  type: string;
+}
 
-async function getPreview(file: FileMetadata): Promise<string> {
-  if (!file.previewHash) return "";
+// Session-level preview cache: avoids re-fetching (and re-signing) when
+// navigating between folders. Keyed by previewHash → PreviewData.
+const previewCache = new Map<string, PreviewData>();
+
+async function getPreview(file: FileMetadata): Promise<PreviewData | null> {
+  if (!file.previewHash) return null;
 
   const cached = previewCache.get(file.previewHash);
   if (cached) return cached;
 
   const client = new BlossomClient(file.server);
-  const auth = await createAuthEvent("get", `Get preview ${file.previewHash}`, file.previewHash);
-  const uint8arr = await client.download(file.previewHash, auth);
+  const uint8arr = await client.download(file.previewHash);
   const ciphertext = new TextDecoder().decode(uint8arr as Uint8Array<ArrayBuffer>);
   const decrypted = await decryptFileWithKey(ciphertext, file.encryptionKey);
-  const blob = new Blob([decrypted as BlobPart], { type: "image/webp" });
-  const imageUrl = URL.createObjectURL(blob);
+  
+  const arr = new Uint8Array(decrypted as any);
+  const mimeType = detectMimeTypeFromMagicBytes(arr) || "image/webp";
 
-  previewCache.set(file.previewHash, imageUrl);
-  return imageUrl;
+  const blob = new Blob([decrypted as BlobPart], { type: mimeType });
+  const imageUrl = URL.createObjectURL(blob);
+  const data = { url: imageUrl, type: mimeType };
+
+  previewCache.set(file.previewHash, data);
+  return data;
 }
 
 export function FileCard({
@@ -71,10 +73,24 @@ export function FileCard({
   const [showMoveDialog, setShowMoveDialog] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [renameValue, setRenameValue] = useState("");
+  const [showPreview, setShowPreview] = useState(false);
+
   const [error, setError] = useState<string | null>(null);
   const [previewloaded, setPreviewloaded] = useState(false);
-  const [preview, setPreview] = useState<string | null>(null);
+  const [preview, setPreview] = useState<PreviewData | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  const handleTileMouseEnter = () => {
+    videoRef.current?.play().catch(() => {});
+  };
+
+  const handleTileMouseLeave = () => {
+    if (videoRef.current) {
+      videoRef.current.pause();
+      videoRef.current.currentTime = 0;
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -90,9 +106,9 @@ export function FileCard({
     setPreview(null);
 
     getPreview(file)
-      .then((url) => {
+      .then((data) => {
         if (cancelled) return;
-        setPreview(url || null);
+        setPreview(data || null);
       })
       .catch(() => {
         if (cancelled) return;
@@ -123,8 +139,7 @@ export function FileCard({
     setError(null);
     try {
       const client = new BlossomClient(file.server);
-      const auth = await createAuthEvent("get", `Get ${file.hash}`, file.hash);
-      const blob = await client.download(file.hash, auth);
+      const blob = await client.download(file.hash);
       const ciphertext = new TextDecoder().decode(blob);
       const decrypted = await decryptFileWithKey(ciphertext, file.encryptionKey);
 
@@ -210,6 +225,9 @@ export function FileCard({
     onToggleSelection?.(file.hash);
   };
 
+
+
+
   const selectionControl = (
     <label
       className={`file-select ${viewMode === "grid" ? "file-select-tile" : "file-select-list"}`}
@@ -291,12 +309,27 @@ export function FileCard({
             onClick={() => setShowMenu(false)}
           />
         )}
-        <div className={`file-tile ${showMenu ? "menu-open" : ""} ${selected ? "selected" : ""}`}>
+        <div 
+          className={`file-tile ${showMenu ? "menu-open" : ""} ${selected ? "selected" : ""}`}
+          onMouseEnter={handleTileMouseEnter}
+          onMouseLeave={handleTileMouseLeave}
+        >
           {/* Preview area */}
           <div className={`file-tile-preview ${showMenu ? "menu-open" : ""}`}>
             {selectionControl}
             {hasPreview ? (
-              <img src={preview} alt={file.name} className="file-tile-img" />
+              preview?.type.startsWith("video/") ? (
+                <video
+                  ref={videoRef}
+                  src={preview.url}
+                  className="file-tile-img"
+                  muted
+                  loop
+                  playsInline
+                />
+              ) : (
+                <img src={preview!.url} alt={file.name} className="file-tile-img" />
+              )
             ) : null}
             <div
               className="file-tile-icon-fallback"
@@ -307,6 +340,18 @@ export function FileCard({
 
             {/* Hover overlay — pure CSS, no JS hover tracking */}
             <div className="file-tile-overlay">
+              <button
+                className="tile-action-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowPreview(true);
+                }}
+                title="Preview"
+              >
+                <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor" style={{ pointerEvents: "none" }}>
+                  <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zm0 12.5c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
+                </svg>
+              </button>
               <button
                 className="tile-action-btn"
                 onClick={(e) => {
@@ -344,9 +389,9 @@ export function FileCard({
             <span className="file-tile-name" title={file.name}>{file.name}</span>
             <span className="file-tile-meta">{formatSize(file.size)} · {formatDate(file.uploadedAt)}</span>
           </div>
-
           {error && <div className="file-error">{error}</div>}
         </div>
+        {showPreview && <FilePreviewModal file={file} onClose={() => setShowPreview(false)} />}
         {moveDialog}
         {renameModal}
         {downloadToast}
@@ -358,11 +403,25 @@ export function FileCard({
   return (
     <>
       {showMenu && <div className="file-menu-backdrop" onClick={() => setShowMenu(false)} />}
-      <div className={`file-card ${selected ? "selected" : ""}`}>
+      <div 
+        className={`file-card ${selected ? "selected" : ""}`}
+        onMouseEnter={handleTileMouseEnter}
+        onMouseLeave={handleTileMouseLeave}
+      >
         {selectionControl}
         {previewloaded && preview ? (
           <div className="file-icon" data-type={icon}>
-            <img src={preview} alt="" />
+            {preview.type.startsWith("video/") ? (
+              <video
+                ref={videoRef}
+                src={preview.url}
+                muted
+                loop
+                playsInline
+              />
+            ) : (
+              <img src={preview.url} alt="" />
+            )}
           </div>
         ) : (
           <div className="file-icon" data-type={icon}>
@@ -377,6 +436,18 @@ export function FileCard({
           <button className="action-btn" onClick={handleDownload} disabled={downloading} title="Download">
             {downloading ? "..." : "↓"}
           </button>
+          <button 
+            className="action-btn" 
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowPreview(true);
+            }} 
+            title="Preview"
+          >
+            <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor" style={{ pointerEvents: "none" }}>
+              <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zm0 12.5c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
+            </svg>
+          </button>
           <button className="action-btn menu-btn" onClick={() => setShowMenu(!showMenu)} title="More">
             ⋮
           </button>
@@ -390,6 +461,7 @@ export function FileCard({
         </div>
         {error && <div className="file-error">{error}</div>}
       </div>
+      {showPreview && <FilePreviewModal file={file} onClose={() => setShowPreview(false)} />}
       {moveDialog}
       {renameModal}
       {downloadToast}

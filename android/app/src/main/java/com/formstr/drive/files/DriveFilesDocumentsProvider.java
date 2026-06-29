@@ -27,6 +27,12 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import android.graphics.Point;
+import android.content.res.AssetFileDescriptor;
+import android.provider.DocumentsContract;
+import android.provider.DocumentsProvider;
+import android.util.Log;
+
 import java.util.List;
 import java.util.UUID;
 
@@ -242,6 +248,24 @@ public class DriveFilesDocumentsProvider extends DocumentsProvider {
     }
 
     @Override
+    public AssetFileDescriptor openDocumentThumbnail(String documentId, Point sizeHint, CancellationSignal signal) throws FileNotFoundException {
+        DriveManifestStore.DriveManifest manifest = loadManifestOrThrow();
+        DriveManifestStore.FileEntry file = manifest.getFileById(documentId);
+        if (file == null || file.previewHash == null || file.previewHash.isEmpty()) {
+            throw new FileNotFoundException("No thumbnail available for: " + documentId);
+        }
+
+        try {
+            File thumbnailFile = ensureThumbnailFile(file, signal);
+            ParcelFileDescriptor pfd = ParcelFileDescriptor.open(thumbnailFile, ParcelFileDescriptor.MODE_READ_ONLY);
+            return new AssetFileDescriptor(pfd, 0, AssetFileDescriptor.UNKNOWN_LENGTH);
+        } catch (IOException error) {
+            Log.e(TAG, "Failed to export Drive file thumbnail", error);
+            throw new FileNotFoundException(error.getMessage());
+        }
+    }
+
+    @Override
     public boolean isChildDocument(String parentDocumentId, String documentId) {
         if (DriveManifestStore.ROOT_DOCUMENT_ID.equals(documentId)) {
             return DriveManifestStore.ROOT_DOCUMENT_ID.equals(parentDocumentId);
@@ -387,6 +411,9 @@ public class DriveFilesDocumentsProvider extends DocumentsProvider {
         if (file.isPendingImport) {
             flags |= DocumentsContract.Document.FLAG_SUPPORTS_WRITE;
         }
+        if (file.previewHash != null && !file.previewHash.isEmpty()) {
+            flags |= DocumentsContract.Document.FLAG_SUPPORTS_THUMBNAIL;
+        }
 
         row.add(DocumentsContract.Document.COLUMN_FLAGS, flags);
         row.add(DocumentsContract.Document.COLUMN_SIZE, file.size);
@@ -455,6 +482,47 @@ public class DriveFilesDocumentsProvider extends DocumentsProvider {
         } finally {
             nm.cancel(notifId);
         }
+    }
+
+    private File ensureThumbnailFile(
+            DriveManifestStore.FileEntry file,
+            @Nullable CancellationSignal signal
+    ) throws IOException {
+        Context context = ensureContext();
+        File thumbnailsDirectory = new File(context.getFilesDir(), "drive-thumbnails");
+        if (!thumbnailsDirectory.exists() && !thumbnailsDirectory.mkdirs()) {
+            throw new IOException("Failed to create thumbnails directory");
+        }
+        
+        File thumbnailFile = new File(thumbnailsDirectory, file.previewHash + ".bin");
+        if (thumbnailFile.exists() && thumbnailFile.length() > 0) {
+            return thumbnailFile;
+        }
+
+        byte[] encryptedBlob = downloadEncryptedBlob(file.server, file.previewHash, signal, null);
+        byte[] decryptedBytes;
+
+        try {
+            decryptedBytes = DriveFilesCrypto.decryptEncryptedBlob(encryptedBlob, file.encryptionKey);
+        } catch (Exception error) {
+            throw new IOException("Failed to decrypt Drive file thumbnail", error);
+        }
+
+        File tempFile = new File(thumbnailsDirectory, file.previewHash + ".tmp");
+        try (FileOutputStream outputStream = new FileOutputStream(tempFile, false)) {
+            outputStream.write(decryptedBytes);
+            outputStream.flush();
+        }
+
+        if (thumbnailFile.exists() && !thumbnailFile.delete()) {
+            throw new IOException("Failed to replace cached thumbnail");
+        }
+
+        if (!tempFile.renameTo(thumbnailFile)) {
+            throw new IOException("Failed to finalize cached thumbnail");
+        }
+
+        return thumbnailFile;
     }
 
     private void ensureNotificationChannel(NotificationManager nm) {

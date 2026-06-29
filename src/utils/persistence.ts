@@ -13,6 +13,7 @@ export const STORAGE_KEYS = {
   NIP46_PUBKEY: "formstr-drive-nip46-pubkey",
   NIP46_CLIENT_SECRET_HEX: "formstr-drive-nip46-client-secret-hex",
   NSEC: "formstr-drive-nsec",
+  DRIVE_KEY_CACHE: "formstr-drive-drive-key-cache",
 } as const;
 
 function parseStoredValue<T>(value: string | null, defaultValue: T): T {
