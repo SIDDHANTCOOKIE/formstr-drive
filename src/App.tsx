@@ -37,8 +37,8 @@ function DriveLayout() {
         <main className="drive-main">
           <FileList />
         </main>
+        <UploadManager />
       </div>
-      <UploadManager />
     </div>
   );
 }

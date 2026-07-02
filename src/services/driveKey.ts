@@ -239,7 +239,9 @@ export async function getDriveKeyring(): Promise<DriveKeyEntry[]> {
   // can rebuild the keyring without hitting the network.
   const encryptedPayloads = events.map((e) => e.content);
   if (encryptedPayloads.length > 0) {
-    await setStoredItem(STORAGE_KEYS.DRIVE_KEY_CACHE, encryptedPayloads);
+    const existingCache = await getStoredItem<string[] | null>(STORAGE_KEYS.DRIVE_KEY_CACHE, null) || [];
+    const merged = Array.from(new Set([...existingCache, ...encryptedPayloads]));
+    await setStoredItem(STORAGE_KEYS.DRIVE_KEY_CACHE, merged);
   }
 
   console.log(`[DriveKey] Keyring ready with ${keyring.length} key(s)`);
@@ -341,6 +343,17 @@ async function initializeDriveKey(
   }
 
   activeSecretKeyHex = secretKeyHex;
+  
+  // Immediately cache this newly created key so it's available on next cold start
+  // even if the relays were slow or the app was closed before a fetch could complete.
+  try {
+    const existingCache = await getStoredItem<string[] | null>(STORAGE_KEYS.DRIVE_KEY_CACHE, null) || [];
+    const newCache = Array.from(new Set([...existingCache, encryptedContent]));
+    await setStoredItem(STORAGE_KEYS.DRIVE_KEY_CACHE, newCache);
+  } catch (e) {
+    console.warn("[DriveKey] Failed to cache newly created key locally", e);
+  }
+
   return {
     secretKeyHex,
     conversationKey: buildConversationKey(secretKeyHex),

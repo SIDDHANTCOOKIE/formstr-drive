@@ -49,6 +49,7 @@ export interface FileIndexContextType {
   currentFolder: string;
   setCurrentFolder: (folder: string) => void;
   loading: boolean;
+  hasHydratedIndex: boolean;
   error: string | null;
   uploadProgress: UploadProgress | null;
   uploadFile: (file: File, server: string) => Promise<void>;
@@ -440,6 +441,7 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
         currentFolder,
         setCurrentFolder,
         loading,
+        hasHydratedIndex,
         error,
         uploadProgress,
         uploadFile,

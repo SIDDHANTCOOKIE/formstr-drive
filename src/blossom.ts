@@ -64,7 +64,7 @@ export class BlossomClient {
         );
       };
 
-      xhr.send(new Blob([blob], { type: "application/octet-stream" }));
+      xhr.send(new Blob([blob as any], { type: "application/octet-stream" }));
     });
   }
 

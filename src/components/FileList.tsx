@@ -28,6 +28,7 @@ export function FileList() {
     currentFolder,
     setCurrentFolder,
     loading,
+    hasHydratedIndex,
     deleteFiles,
     moveFiles,
   } = useFileIndex();
@@ -248,7 +249,7 @@ export function FileList() {
     </div>
   );
 
-  if (loading) {
+  if (loading || !hasHydratedIndex) {
     return (
       <div className="loading-container">
         <div className="loading-state">Hold tight while we are fetching your files...</div>
