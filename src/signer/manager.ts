@@ -23,9 +23,9 @@ type Nip46LoginOptions = {
 };
 
 const NATIVE_SIGNER_CONNECT_TIMEOUT_MS = 20000;
-const NSEC_PERSIST_TIMEOUT_MS = 2000;
-const NSEC_RESTORE_TIMEOUT_MS = 1500;
-const LOGOUT_CLEANUP_TIMEOUT_MS = 1500;
+const NSEC_PERSIST_TIMEOUT_MS = 10000;
+const NSEC_RESTORE_TIMEOUT_MS = 10000;
+const LOGOUT_CLEANUP_TIMEOUT_MS = 5000;
 
 function createTimeoutError(message: string) {
   const error = new Error(message);
@@ -116,17 +116,22 @@ class SignerManager {
 
         if (cachedPubkey) {
           this.signer = createDeferredLocalSigner(cachedPubkey, async () => {
-            const nsec = await withTimeout(
-              getStoredSecret(STORAGE_KEYS.NSEC),
-              NSEC_RESTORE_TIMEOUT_MS,
-              "Timed out while restoring secure nsec",
-            );
+            try {
+              const nsec = await withTimeout(
+                getStoredSecret(STORAGE_KEYS.NSEC),
+                NSEC_RESTORE_TIMEOUT_MS,
+                "Timed out while restoring secure nsec",
+              );
 
-            if (!nsec) {
-              throw new Error("Stored nsec not found");
+              if (!nsec) {
+                throw new Error("Stored nsec not found");
+              }
+
+              return bytesToHex(decodeNsecBytes(nsec));
+            } catch (err) {
+              console.error("Failed to load nsec from secure storage:", err);
+              throw err;
             }
-
-            return bytesToHex(decodeNsecBytes(nsec));
           });
           this.pubkey = cachedPubkey;
           await setStoredItem(STORAGE_KEYS.PROFILE, { pubkey: cachedPubkey });

@@ -68,17 +68,22 @@ export async function fetchFileIndex(
   console.log("[FileIndex] Starting fetch from relays:", RELAYS);
   console.log("[FileIndex] User pubkey:", pubkey);
 
-  // Proactively fetch the full Drive Key keyring before the relay timer starts.
+  // Fetch the full Drive Key keyring IN PARALLEL with the file subscription
+  // below — file events can stream in from relays while the keyring resolves,
+  // and the keys are only actually needed at the processing step (10s later).
+  // This keeps a slow key fetch from blocking file loading on first login.
   // Every key the user has ever published may unlock files encrypted under it,
   // so we keep them ALL and try each when decrypting. If this fails (e.g. signer
   // unavailable), we fall back to legacy decryption for every event.
-  let driveConversationKeys: Uint8Array[] = [];
-  try {
-    driveConversationKeys = await getDriveConversationKeys();
-    console.log(`[FileIndex] Drive Key keyring ready (${driveConversationKeys.length} key(s))`);
-  } catch (e) {
-    console.warn("[FileIndex] Could not obtain Drive Key keyring, using legacy decryption", e);
-  }
+  const driveKeysPromise: Promise<Uint8Array[]> = getDriveConversationKeys().catch(
+    (e) => {
+      console.warn(
+        "[FileIndex] Could not obtain Drive Key keyring, using legacy decryption",
+        e,
+      );
+      return [];
+    },
+  );
 
   const pool = new SimplePool();
 
@@ -116,6 +121,10 @@ export async function fetchFileIndex(
       console.log(`[FileIndex] Timeout reached, processing ${events.length} events`);
       sub.close();
       pool.close(RELAYS);
+
+      // Keys were resolving in parallel with the subscription; grab them now.
+      const driveConversationKeys = await driveKeysPromise;
+      console.log(`[FileIndex] Drive Key keyring ready (${driveConversationKeys.length} key(s))`);
 
       const files: FileMetadata[] = [];
       const legacyFilesToMigrate: FileMetadata[] = [];
