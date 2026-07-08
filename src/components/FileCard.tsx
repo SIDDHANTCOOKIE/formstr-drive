@@ -3,11 +3,12 @@ import type { FileMetadata } from "../types/metadata";
 import { useFileIndex } from "../hooks/useFileContext";
 import { decryptFileWithKey } from "../crypto";
 import { BlossomClient } from "../blossom";
-import { saveFileToDownloads, openDownloadedFile } from "../native/driveManifest";
-import { downloadAndDecryptFile } from "../services/downloadFile";
+import { openDownloadedFile } from "../native/driveManifest";
 import { isNativePlatform } from "../utils/platform";
 import { FilePreviewModal } from "./FilePreviewModal";
 import { detectMimeTypeFromMagicBytes, getFileIcon, MAX_PREVIEW_SIZE } from "../utils/fileTypeHelpers";
+import { useToast } from "../hooks/useToast";
+import { isAbortError } from "../utils/abortError";
 
 interface FileCardProps {
   file: FileMetadata;
@@ -66,17 +67,15 @@ export function FileCard({
   selected = false,
   onToggleSelection,
 }: FileCardProps) {
-  const { deleteFile, moveFile, folders, renameFile } = useFileIndex();
+  const { deleteFile, moveFile, folders, renameFile, downloadFile } = useFileIndex();
+  const toast = useToast();
   const [downloading, setDownloading] = useState(false);
-  const [downloadedUri, setDownloadedUri] = useState<string | null>(null);
-  const [showToast, setShowToast] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [showMoveDialog, setShowMoveDialog] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [showPreview, setShowPreview] = useState(false);
 
-  const [error, setError] = useState<string | null>(null);
   const [previewloaded, setPreviewloaded] = useState(false);
   const [preview, setPreview] = useState<PreviewData | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -141,7 +140,7 @@ export function FileCard({
     // opening the modal. Mirrors MAX_PREVIEW_SIZE handling in FilePreviewModal,
     // but kept here so the modal never opens just to show a one-line notice.
     if (file.size > MAX_PREVIEW_SIZE) {
-      setError("File is too large to preview (over 5 MB). Please download it.");
+      toast.error("File is too large to preview (over 5 MB). Please download it.");
       return;
     }
     setShowPreview(true);
@@ -149,16 +148,22 @@ export function FileCard({
 
   const handleDownload = async () => {
     setDownloading(true);
-    setError(null);
     try {
-      const decrypted = await downloadAndDecryptFile(file);
-
-      const result = await saveFileToDownloads(decrypted as Uint8Array, file.name, file.type || "application/octet-stream");
-      setDownloadedUri(result?.uri ?? null);
-      setShowToast(true);
-      setTimeout(() => setShowToast(false), 5000);
+      const result = await downloadFile(file);
+      const uri = result?.uri ?? null;
+      toast.success("Downloaded successfully", {
+        action:
+          isNativePlatform && uri
+            ? {
+                label: "View",
+                onClick: () => openDownloadedFile(uri, file.type || "application/octet-stream"),
+              }
+            : undefined,
+      });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Download failed");
+      if (!isAbortError(e)) {
+        toast.error(e instanceof Error ? e.message : "Download failed");
+      }
     } finally {
       setDownloading(false);
     }
@@ -166,11 +171,10 @@ export function FileCard({
 
   const handleDelete = async () => {
     if (confirm(`Delete "${file.name}"?`)) {
-      setError(null);
       try {
         await deleteFile(file.hash);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Delete failed");
+        toast.error(e instanceof Error ? e.message : "Delete failed");
       }
     }
     setShowMenu(false);
@@ -188,7 +192,7 @@ export function FileCard({
       try {
         await renameFile(file.hash, trimmed);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Rename failed");
+        toast.error(e instanceof Error ? e.message : "Rename failed");
       }
     }
     setShowRenameModal(false);
@@ -209,27 +213,12 @@ export function FileCard({
       await moveFile(file.hash, newFolder);
       setShowMoveDialog(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Move failed");
+      toast.error(e instanceof Error ? e.message : "Move failed");
     }
   };
 
   const icon = getFileIcon(file.type);
   const hasPreview = previewloaded && !!preview;
-
-  const downloadToast = showToast && (
-    <div className="download-toast">
-      <span>Downloaded successfully</span>
-      {isNativePlatform && downloadedUri && (
-        <button
-          className="download-toast-view"
-          onClick={() => openDownloadedFile(downloadedUri, file.type || "application/octet-stream")}
-        >
-          View
-        </button>
-      )}
-      <button className="download-toast-close" onClick={() => setShowToast(false)}>×</button>
-    </div>
-  );
 
   const handleSelectionToggle = () => {
     onToggleSelection?.(file.hash);
@@ -396,12 +385,10 @@ export function FileCard({
             <span className="file-tile-name" title={file.name}>{file.name}</span>
             <span className="file-tile-meta">{formatSize(file.size)} · {formatDate(file.uploadedAt)}</span>
           </div>
-          {error && <div className="file-error">{error}</div>}
         </div>
         {showPreview && <FilePreviewModal file={file} onClose={() => setShowPreview(false)} />}
         {moveDialog}
         {renameModal}
-        {downloadToast}
       </>
     );
   }
@@ -463,12 +450,10 @@ export function FileCard({
             </div>
           )}
         </div>
-        {error && <div className="file-error">{error}</div>}
       </div>
       {showPreview && <FilePreviewModal file={file} onClose={() => setShowPreview(false)} />}
       {moveDialog}
       {renameModal}
-      {downloadToast}
     </>
   );
 }

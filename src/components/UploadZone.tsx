@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef } from "react";
 import { useFileIndex } from "../hooks/useFileContext";
 import { useBlossomServer } from "../hooks/useBlossomServer";
+import { isAbortError } from "../utils/abortError";
 
 function getHostname(url: string): string {
   try {
@@ -32,6 +33,9 @@ export function UploadZone() {
         try {
           await uploadFile(file, selectedServer);
         } catch (e) {
+          if (isAbortError(e)) {
+            break;
+          }
           errors.push(`${file.name}: ${e instanceof Error ? e.message : "Upload failed"}`);
         }
       }

@@ -8,6 +8,8 @@ import { FolderSidebar } from "./components/FolderSidebar";
 import { FileList } from "./components/FileList";
 import { SignIn } from "./components/SignIn/SignIn";
 import { UploadManager } from "./components/UploadManager";
+import { DownloadManager } from "./components/DownloadManager";
+import { ToastProvider } from "./context/ToastProvider";
 import "./App.css";
 
 function DriveLayout() {
@@ -38,6 +40,7 @@ function DriveLayout() {
           <FileList />
         </main>
         <UploadManager />
+        <DownloadManager />
       </div>
     </div>
   );
@@ -45,13 +48,15 @@ function DriveLayout() {
 
 function App() {
   return (
-    <ProfileProvider>
-      <BlossomServerProvider>
-        <FileIndexProvider>
-          <DriveLayout />
-        </FileIndexProvider>
-      </BlossomServerProvider>
-    </ProfileProvider>
+    <ToastProvider>
+      <ProfileProvider>
+        <BlossomServerProvider>
+          <FileIndexProvider>
+            <DriveLayout />
+          </FileIndexProvider>
+        </BlossomServerProvider>
+      </ProfileProvider>
+    </ToastProvider>
   );
 }
 

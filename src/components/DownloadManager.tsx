@@ -2,27 +2,24 @@ import { useFileIndex } from "../hooks/useFileContext";
 import { isAndroidPlatform } from "../utils/platform";
 import "./UploadManager.css";
 
-export function UploadManager() {
-  const { uploadProgress, cancelUpload } = useFileIndex();
+export function DownloadManager() {
+  const { downloadProgress, cancelDownload } = useFileIndex();
 
-  if (!uploadProgress) return null;
+  if (!downloadProgress) return null;
 
-  const progress = uploadProgress.progress ?? 0;
+  const progress = downloadProgress.progress ?? 0;
   const radius = 10;
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference - (progress / 100) * circumference;
 
-  const totalChunks = uploadProgress.totalChunks || 0;
-  const currentChunk = uploadProgress.currentChunk || 0;
-  
-  // Pass 1 (encrypting/hashing) covers 0-45%, pass 2 (uploading) covers 50-100%
-  const isPass2 = progress >= 50 || uploadProgress.stage === "Upload complete";
+  const totalChunks = downloadProgress.totalChunks || 0;
+  const currentChunk = downloadProgress.currentChunk || 0;
 
   return (
     <div className="upload-manager">
       <div className="upload-manager-header">
-        <span className="upload-manager-title">Uploading 1 item</span>
-        <button className="cancel-transfer-btn" onClick={cancelUpload} title="Cancel upload" aria-label="Cancel upload">
+        <span className="upload-manager-title">Downloading 1 item</span>
+        <button className="cancel-transfer-btn" onClick={cancelDownload} title="Cancel download" aria-label="Cancel download">
           ×
         </button>
       </div>
@@ -30,33 +27,27 @@ export function UploadManager() {
         <div className="upload-item">
           <div className="upload-item-icon">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-              <polyline points="14 2 14 8 20 8"></polyline>
-              <line x1="12" y1="18" x2="12" y2="12"></line>
-              <polyline points="9 15 12 12 15 15"></polyline>
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
             </svg>
           </div>
           <div className="upload-item-info">
-            <span className="upload-item-name">{uploadProgress.fileName}</span>
-            <span className="upload-item-stage">{uploadProgress.stage}</span>
+            <span className="upload-item-name">{downloadProgress.fileName}</span>
+            <span className="upload-item-stage">{downloadProgress.stage}</span>
 
             {totalChunks > 1 && (
               <div className="chunk-grid">
                 {Array.from({ length: totalChunks }).map((_, i) => {
                   let status = "pending";
-                  if (isPass2) {
-                    if (i + 1 < currentChunk || uploadProgress.stage === "Upload complete") status = "done";
-                    else if (i + 1 === currentChunk) status = "uploading";
-                  } else {
-                    if (i + 1 < currentChunk) status = "hashing-done";
-                    else if (i + 1 === currentChunk) status = "hashing";
-                  }
+                  if (i + 1 < currentChunk) status = "done";
+                  else if (i + 1 === currentChunk) status = "uploading";
                   return <div key={i} className={`chunk-indicator ${status}`} title={`Chunk ${i + 1}`} />;
                 })}
               </div>
             )}
           </div>
-          
+
           <div className="upload-progress-wrapper">
             <svg className="circular-progress" width="28" height="28" viewBox="0 0 24 24">
               <circle className="progress-bg" cx="12" cy="12" r={radius} strokeWidth="2" />
@@ -77,7 +68,7 @@ export function UploadManager() {
             <line x1="12" y1="16" x2="12" y2="12"></line>
             <line x1="12" y1="8" x2="12.01" y2="8"></line>
           </svg>
-          <span>Keep the app open for best results — uploading needs it to stay active.</span>
+          <span>Downloading in the background — see the notification for progress.</span>
         </div>
       ) : (
         <div className="transfer-warning">
@@ -86,7 +77,7 @@ export function UploadManager() {
             <line x1="12" y1="9" x2="12" y2="13"></line>
             <line x1="12" y1="17" x2="12.01" y2="17"></line>
           </svg>
-          <span>Keep this window open — closing it or navigating away will stop the upload.</span>
+          <span>Keep this window open — closing it or navigating away will stop the download.</span>
         </div>
       )}
     </div>

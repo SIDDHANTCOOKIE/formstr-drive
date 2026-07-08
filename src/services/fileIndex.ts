@@ -1,4 +1,4 @@
-import { SimplePool, nip44, type Filter } from "nostr-tools";
+import { SimplePool, nip44, type Filter, type Event } from "nostr-tools";
 import type { FileMetadata, NostrEvent } from "../types/metadata";
 import { signerManager } from "../signer/manager";
 import { APP_RELAYS } from "../utils/common";
@@ -217,44 +217,57 @@ export async function autoMigrateLegacyFiles(files: FileMetadata[]) {
   }
 }
 
-export async function saveFileMetadata(metadata: FileMetadata): Promise<void> {
-  console.log("[FileIndex] Saving metadata:", metadata);
+/**
+ * Builds and signs the kind-34578 metadata event, but does NOT publish it.
+ * Split out so callers (e.g. an Android foreground handoff) can sign the
+ * event while the signer is available and publish it later, possibly from
+ * a background context with no signer access.
+ */
+export async function buildSignedMetadataEvent(metadata: FileMetadata): Promise<Event> {
+  console.log("[FileIndex] Building signed metadata event:", metadata);
   const signer = await getSigner();
   const pubkey = await signer.getPublicKey();
+
+  const encrypted = await encryptMetadata(metadata);
+  console.log("[FileIndex] Encrypted metadata length:", encrypted.length);
+
+  const event: NostrEvent = {
+    kind: METADATA_KIND,
+    pubkey,
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [
+      ["d", metadata.hash],
+      ["t", "files"],
+      ["client", CLIENT_TAG],
+      ["encrypted", "nip44"],
+    ],
+    content: encrypted,
+  };
+
+  console.log("[FileIndex] Event to sign:", event);
+  const signedEvent = await signer.signEvent(event);
+  console.log("[FileIndex] Signed event:", signedEvent);
+  return signedEvent;
+}
+
+export async function publishMetadataEvent(signedEvent: Event): Promise<void> {
   const pool = new SimplePool();
-
   try {
-    const encrypted = await encryptMetadata(metadata);
-    console.log("[FileIndex] Encrypted metadata length:", encrypted.length);
-
-    const event: NostrEvent = {
-      kind: METADATA_KIND,
-      pubkey,
-      created_at: Math.floor(Date.now() / 1000),
-      tags: [
-        ["d", metadata.hash],
-        ["t", "files"],
-        ["client", CLIENT_TAG],
-        ["encrypted", "nip44"],
-      ],
-      content: encrypted,
-    };
-
-    console.log("[FileIndex] Event to publish:", event);
-    const signedEvent = await signer.signEvent(event);
-    console.log("[FileIndex] Signed event:", signedEvent);
-
     const publishPromises = pool.publish(RELAYS, signedEvent);
     console.log("[FileIndex] Publishing to relays:", RELAYS);
-
     await Promise.any(publishPromises);
     console.log("[FileIndex] Successfully published to at least one relay");
   } catch (e) {
-    console.error("[FileIndex] Failed to save metadata:", e);
+    console.error("[FileIndex] Failed to publish metadata:", e);
     throw e;
   } finally {
     pool.close(RELAYS);
   }
+}
+
+export async function saveFileMetadata(metadata: FileMetadata): Promise<void> {
+  const signedEvent = await buildSignedMetadataEvent(metadata);
+  await publishMetadataEvent(signedEvent);
 }
 
 export async function deleteFileMetadata(_hash: string, currentMetadata: FileMetadata): Promise<void> {

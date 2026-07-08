@@ -3,6 +3,7 @@ import type { FileMetadata } from "../types/metadata";
 import { resolvePreviewMode, MAX_PREVIEW_SIZE } from "../utils/fileTypeHelpers";
 import { canOpenInNostrDocs, openInNostrDocs } from "../utils/docsIntegrationHelpers";
 import { downloadAndDecryptFile } from "../services/downloadFile";
+import { useToast } from "../hooks/useToast";
 
 interface FilePreviewModalProps {
   file: FileMetadata;
@@ -14,6 +15,7 @@ import { PdfPreview } from "./preview/PdfPreview";
 import { TextPreview } from "./preview/TextPreview";
 
 export function FilePreviewModal({ file, onClose }: FilePreviewModalProps) {
+  const toast = useToast();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
@@ -62,7 +64,9 @@ export function FilePreviewModal({ file, onClose }: FilePreviewModalProps) {
         setBlobUrl(createdUrl);
       } catch (e) {
         if (cancelled) return;
-        setError(e instanceof Error ? e.message : "Failed to load preview");
+        const message = e instanceof Error ? e.message : "Failed to load preview";
+        setError(message);
+        toast.error(message);
       } finally {
         if (!cancelled) {
           setLoading(false);
@@ -78,7 +82,7 @@ export function FilePreviewModal({ file, onClose }: FilePreviewModalProps) {
         URL.revokeObjectURL(createdUrl);
       }
     };
-  }, [file, mode]);
+  }, [file, mode, toast]);
 
   return (
     <div className="preview-modal-overlay" onClick={onClose}>

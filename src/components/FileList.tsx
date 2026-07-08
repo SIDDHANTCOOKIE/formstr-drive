@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useFileIndex } from "../hooks/useFileContext";
+import { useToast } from "../hooks/useToast";
 import { FileCard } from "./FileCard";
 import { UploadZone } from "./UploadZone";
 
@@ -32,10 +33,10 @@ export function FileList() {
     deleteFiles,
     moveFiles,
   } = useFileIndex();
+  const toast = useToast();
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [selectedFileHashes, setSelectedFileHashes] = useState<Set<string>>(new Set());
-  const [bulkError, setBulkError] = useState<string | null>(null);
   const [bulkAction, setBulkAction] = useState<"move" | "delete" | null>(null);
   const [showMoveDialog, setShowMoveDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
@@ -92,7 +93,6 @@ export function FileList() {
   }, [selectedCount]);
 
   const toggleFileSelection = (hash: string) => {
-    setBulkError(null);
     setSelectedFileHashes((prev) => {
       const next = new Set(prev);
       if (next.has(hash)) {
@@ -105,7 +105,6 @@ export function FileList() {
   };
 
   const handleToggleSelectAll = () => {
-    setBulkError(null);
     setSelectedFileHashes(() => {
       if (allVisibleSelected) {
         return new Set();
@@ -115,14 +114,12 @@ export function FileList() {
   };
 
   const handleClearSelection = () => {
-    setBulkError(null);
     setSelectedFileHashes(new Set());
   };
 
   const handleRequestBulkDelete = () => {
     if (selectedCount === 0 || bulkAction !== null) return;
 
-    setBulkError(null);
     setShowDeleteDialog(true);
   };
 
@@ -130,14 +127,13 @@ export function FileList() {
     if (selectedCount === 0) return;
 
     setBulkAction("delete");
-    setBulkError(null);
 
     try {
       await deleteFiles(selectedFiles.map((file) => file.hash));
       setSelectedFileHashes(new Set());
       setShowDeleteDialog(false);
     } catch (e) {
-      setBulkError(e instanceof Error ? e.message : "Bulk delete failed");
+      toast.error(e instanceof Error ? e.message : "Bulk delete failed");
     } finally {
       setBulkAction(null);
     }
@@ -147,14 +143,13 @@ export function FileList() {
     if (selectedCount === 0) return;
 
     setBulkAction("move");
-    setBulkError(null);
 
     try {
       await moveFiles(selectedFiles.map((file) => file.hash), folder);
       setSelectedFileHashes(new Set());
       setShowMoveDialog(false);
     } catch (e) {
-      setBulkError(e instanceof Error ? e.message : "Bulk move failed");
+      toast.error(e instanceof Error ? e.message : "Bulk move failed");
     } finally {
       setBulkAction(null);
     }
@@ -262,8 +257,6 @@ export function FileList() {
     <div className="file-list-container">
       <div className="file-list-scroll" style={selectedCount > 0 ? { paddingBottom: 120 } : undefined}>
         <UploadZone />
-
-        {bulkError && <div className="bulk-action-error">{bulkError}</div>}
 
         <div className="file-list-toolbar">
           <div className="search-wrap">

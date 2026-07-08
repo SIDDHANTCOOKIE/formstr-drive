@@ -1,5 +1,13 @@
 import { signerManager } from "./signer/manager";
 
+/**
+ * Expiration window for an upload auth event that must survive a background
+ * (native) upload after the foreground signs it. Generous because the native
+ * worker's chunk PUTs can run long after signing, but tunable per-server since
+ * some Blossom servers cap how far into the future `expiration` can be.
+ */
+export const BACKGROUND_UPLOAD_AUTH_EXPIRATION_SECONDS = 6 * 60 * 60; // 6 hours
+
 async function computeSha256Hex(data: Uint8Array | Blob): Promise<string> {
   const buffer = data instanceof Blob ? await data.arrayBuffer() : data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
   const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
