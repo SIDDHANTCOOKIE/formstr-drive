@@ -108,7 +108,7 @@ export async function prepareUpload(
     throwIfAborted(signal);
     onProgress?.({
       stage: "Encrypting...",
-      progress: Math.round((i / numChunks) * 45),
+      progress: Math.round((i / numChunks) * 20),
       currentChunk: i + 1,
       totalChunks: numChunks,
     });
@@ -217,7 +217,7 @@ export async function uploadFile(
     const bytes = new Uint8Array(await file.arrayBuffer());
     const encBytes = await aesGcmEncryptBytes(bytes, convKey, 0);
     throwIfAborted(signal);
-    onProgress?.({ stage: "Waiting for signature approval...", progress: 50, currentChunk: 1, totalChunks: 1 });
+    onProgress?.({ stage: "Waiting for signature approval...", progress: 20, currentChunk: 1, totalChunks: 1 });
     const auth = await createAuthEvent("upload", `Upload ${file.name}`, encBytes);
     const hash = await client.upload(encBytes, auth, undefined, signal);
     onProgress?.({ stage: "Upload complete", progress: 100, currentChunk: 1, totalChunks: 1 });
@@ -237,7 +237,7 @@ export async function uploadFile(
         throwIfAborted(signal);
         onProgress?.({
           stage: "Encrypting...",
-          progress: Math.round((i / numChunks) * 45), // first pass is 45%
+          progress: Math.round((i / numChunks) * 20), // first pass is 20%
           currentChunk: i + 1,
           totalChunks: numChunks,
         });
@@ -258,7 +258,7 @@ export async function uploadFile(
 
       onProgress?.({
         stage: "Waiting for signature approval...",
-        progress: 45,
+        progress: 20,
         currentChunk: numChunks,
         totalChunks: numChunks,
       });
@@ -268,8 +268,8 @@ export async function uploadFile(
       // upload it directly — no re-encryption needed.
       for (let i = 0; i < numChunks; i++) {
         throwIfAborted(signal);
-        const startProgress = 50 + (i / numChunks) * 50;
-        const chunkWeight = 50 / numChunks;
+        const startProgress = 20 + (i / numChunks) * 80;
+        const chunkWeight = 80 / numChunks;
 
         onProgress?.({
           stage: "Uploading...",
@@ -301,7 +301,7 @@ export async function uploadFile(
       throwIfAborted(signal);
       onProgress?.({
         stage: "Encrypting...",
-        progress: Math.round((i / numChunks) * 45),
+        progress: Math.round((i / numChunks) * 20),
         currentChunk: i + 1,
         totalChunks: numChunks,
       });
@@ -316,7 +316,7 @@ export async function uploadFile(
 
     onProgress?.({
       stage: "Waiting for signature approval...",
-      progress: 45,
+      progress: 20,
       currentChunk: numChunks,
       totalChunks: numChunks,
     });
@@ -324,8 +324,8 @@ export async function uploadFile(
 
     for (let i = 0; i < numChunks; i++) {
       throwIfAborted(signal);
-      const startProgress = 50 + (i / numChunks) * 50;
-      const chunkWeight = 50 / numChunks;
+      const startProgress = 20 + (i / numChunks) * 80;
+      const chunkWeight = 80 / numChunks;
 
       onProgress?.({
         stage: "Uploading...",
