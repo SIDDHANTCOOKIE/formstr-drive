@@ -1,5 +1,5 @@
 import { BlossomClient } from "../blossom";
-import type { FileMetadata } from "../types/metadata";
+import { chunkHashes, type FileMetadata } from "../types/metadata";
 import { aesGcmDecryptBytes, decryptFileWithKey, deriveConversationKeyFromHex } from "../crypto";
 import type { DownloadProgressInfo } from "./downloadFile";
 
@@ -98,9 +98,9 @@ export async function downloadViaServiceWorker(
 
       (async () => {
         try {
-          if (file.chunks && file.chunks.length > 0) {
+          const chunks = chunkHashes(file.chunks);
+          if (chunks.length > 0) {
             const convKey = deriveConversationKeyFromHex(file.encryptionKey);
-            const chunks = file.chunks;
             const totalChunks = chunks.length;
 
             for (let i = 0; i < totalChunks; i++) {

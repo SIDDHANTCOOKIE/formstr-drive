@@ -15,6 +15,8 @@ import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.ServiceCompat;
 
+import com.formstr.drive.R;
+
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -46,6 +48,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public class DriveUploadService extends Service {
     public static final String UPLOAD_CHANNEL_ID = "formstr_drive_uploads";
+    /** Separate channel for terminal (complete/error/interrupted) alerts so they can sound/vibrate. */
+    public static final String UPLOAD_DONE_CHANNEL_ID = "formstr_drive_uploads_done";
 
     public static final String ACTION_PREPARE = "com.formstr.drive.action.PREPARE_UPLOAD";
     public static final String ACTION_START = "com.formstr.drive.action.START_UPLOAD";
@@ -392,10 +396,8 @@ public class DriveUploadService extends Service {
 
     private Notification buildPreparingNotification(String id, String fileName, int notifId) {
         return new NotificationCompat.Builder(this, UPLOAD_CHANNEL_ID)
-                .setContentTitle("Formstr Drive")
-                .setContentText("Preparing to upload " + fileName + "…")
-                .setSmallIcon(android.R.drawable.stat_sys_upload)
-                .setProgress(0, 0, true)
+                .setContentTitle("Preparing " + fileName + "…")
+                .setSmallIcon(R.drawable.ic_notification)                .setProgress(0, 0, true)
                 .setOngoing(true)
                 .setSilent(true)
                 .addAction(0, "Cancel", cancelPendingIntent(id, notifId))
@@ -404,10 +406,8 @@ public class DriveUploadService extends Service {
 
     private Notification buildProgressNotification(String id, String fileName, int percent, int notifId) {
         return new NotificationCompat.Builder(this, UPLOAD_CHANNEL_ID)
-                .setContentTitle("Formstr Drive")
-                .setContentText("Uploading " + fileName + " (" + percent + "%)")
-                .setSmallIcon(android.R.drawable.stat_sys_upload)
-                .setProgress(100, percent, false)
+                .setContentTitle("Uploading " + fileName)
+                .setSmallIcon(R.drawable.ic_notification)                .setProgress(100, percent, false)
                 .setOngoing(true)
                 .setSilent(true)
                 .addAction(0, "Cancel", cancelPendingIntent(id, notifId))
@@ -415,44 +415,51 @@ public class DriveUploadService extends Service {
     }
 
     private Notification buildCompleteNotification(String fileName) {
-        return new NotificationCompat.Builder(this, UPLOAD_CHANNEL_ID)
+        return new NotificationCompat.Builder(this, UPLOAD_DONE_CHANNEL_ID)
                 .setContentTitle("Upload complete")
                 .setContentText(fileName)
-                .setSmallIcon(android.R.drawable.stat_sys_upload_done)
-                .setAutoCancel(true)
+                .setSmallIcon(R.drawable.ic_notification)                .setAutoCancel(true)
                 .setOngoing(false)
                 .build();
     }
 
     private Notification buildErrorNotification(String fileName, String message) {
-        return new NotificationCompat.Builder(this, UPLOAD_CHANNEL_ID)
+        return new NotificationCompat.Builder(this, UPLOAD_DONE_CHANNEL_ID)
                 .setContentTitle("Upload failed")
                 .setContentText(fileName + ": " + message)
-                .setSmallIcon(android.R.drawable.stat_notify_error)
-                .setAutoCancel(true)
+                .setSmallIcon(R.drawable.ic_notification)                .setAutoCancel(true)
                 .setOngoing(false)
                 .build();
     }
 
     private Notification buildInterruptedNotification(String fileName) {
-        return new NotificationCompat.Builder(this, UPLOAD_CHANNEL_ID)
+        return new NotificationCompat.Builder(this, UPLOAD_DONE_CHANNEL_ID)
                 .setContentTitle("Upload interrupted")
                 .setContentText(fileName + " didn't finish — reopen the app to retry")
-                .setSmallIcon(android.R.drawable.stat_notify_error)
-                .setAutoCancel(true)
+                .setSmallIcon(R.drawable.ic_notification)                .setAutoCancel(true)
                 .setOngoing(false)
                 .build();
     }
 
-    private static void ensureNotificationChannel(NotificationManager nm) {
+    public static void ensureNotificationChannel(NotificationManager nm) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
-        if (nm.getNotificationChannel(UPLOAD_CHANNEL_ID) != null) return;
-        NotificationChannel channel = new NotificationChannel(
-                UPLOAD_CHANNEL_ID, "Formstr Drive Uploads", NotificationManager.IMPORTANCE_LOW
-        );
-        channel.setDescription("File upload progress");
-        channel.setSound(null, null);
-        nm.createNotificationChannel(channel);
+        // Progress channel: silent + low importance so ongoing updates don't buzz.
+        if (nm.getNotificationChannel(UPLOAD_CHANNEL_ID) == null) {
+            NotificationChannel channel = new NotificationChannel(
+                    UPLOAD_CHANNEL_ID, "Formstr Drive Uploads", NotificationManager.IMPORTANCE_LOW
+            );
+            channel.setDescription("File upload progress");
+            channel.setSound(null, null);
+            nm.createNotificationChannel(channel);
+        }
+        // Terminal channel: default importance so complete/error alerts sound + vibrate.
+        if (nm.getNotificationChannel(UPLOAD_DONE_CHANNEL_ID) == null) {
+            NotificationChannel doneChannel = new NotificationChannel(
+                    UPLOAD_DONE_CHANNEL_ID, "Formstr Drive Upload Alerts", NotificationManager.IMPORTANCE_DEFAULT
+            );
+            doneChannel.setDescription("Upload complete and error alerts");
+            nm.createNotificationChannel(doneChannel);
+        }
     }
 
     private static int notificationIdFor(String uploadId) {

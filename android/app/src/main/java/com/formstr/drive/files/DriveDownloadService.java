@@ -19,6 +19,8 @@ import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.ServiceCompat;
 
+import com.formstr.drive.R;
+
 import org.json.JSONArray;
 import org.json.JSONException;
 
@@ -74,6 +76,27 @@ public class DriveDownloadService extends Service {
 
     private static final Map<String, CancellationSignal> ACTIVE_SIGNALS = new ConcurrentHashMap<>();
     private static final long WAKE_LOCK_TIMEOUT_MS = 6 * 60 * 60 * 1000L;
+
+    /** Live progress of in-flight downloads, so the JS layer can rehydrate the in-app UI after a reopen. */
+    private static final Map<String, ActiveDownload> ACTIVE_DOWNLOADS = new ConcurrentHashMap<>();
+
+    /** Snapshot of one in-flight download (id + display name + last-reported percent). */
+    public static final class ActiveDownload {
+        public final String id;
+        public final String fileName;
+        public volatile int percent;
+
+        ActiveDownload(String id, String fileName) {
+            this.id = id;
+            this.fileName = fileName;
+            this.percent = 0;
+        }
+    }
+
+    /** Downloads currently active in this process, for JS-side progress rehydration. */
+    public static List<ActiveDownload> activeDownloads() {
+        return new ArrayList<>(ACTIVE_DOWNLOADS.values());
+    }
 
     private ExecutorService executor;
     private final AtomicInteger activeCount = new AtomicInteger(0);
@@ -134,6 +157,7 @@ public class DriveDownloadService extends Service {
 
         CancellationSignal signal = new CancellationSignal();
         ACTIVE_SIGNALS.put(id, signal);
+        ACTIVE_DOWNLOADS.put(id, new ActiveDownload(id, fileName));
         activeCount.incrementAndGet();
 
         executor.execute(() ->
@@ -227,6 +251,7 @@ public class DriveDownloadService extends Service {
                 wakeLock.release();
             }
             ACTIVE_SIGNALS.remove(id);
+            ACTIVE_DOWNLOADS.remove(id);
             // The progress notification (notifId) is done being shown — any
             // terminal result (complete/error) was already posted under its
             // own, separate id in onComplete/onError, so cancelling this one
@@ -251,6 +276,10 @@ public class DriveDownloadService extends Service {
     }
 
     private void onProgress(String id, String fileName, int percent, int notifId, NotificationManager nm) {
+        ActiveDownload active = ACTIVE_DOWNLOADS.get(id);
+        if (active != null) {
+            active.percent = percent;
+        }
         broadcastEvent(EVENT_PROGRESS, id, percent, null, null);
         nm.notify(notifId, buildProgressNotification(id, fileName, percent, notifId));
     }
@@ -289,10 +318,8 @@ public class DriveDownloadService extends Service {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
         return new NotificationCompat.Builder(this, DriveFileDownloader.DOWNLOAD_CHANNEL_ID)
-                .setContentTitle("Formstr Drive")
-                .setContentText("Downloading " + fileName)
-                .setSmallIcon(android.R.drawable.stat_sys_download)
-                .setProgress(100, percent, false)
+                .setContentTitle("Downloading " + fileName)
+                .setSmallIcon(R.drawable.ic_notification)                .setProgress(100, percent, false)
                 .setOngoing(true)
                 .setSilent(true)
                 .addAction(0, "Cancel", cancelPendingIntent)
@@ -300,11 +327,10 @@ public class DriveDownloadService extends Service {
     }
 
     private Notification buildCompleteNotification(String fileName, String mimeType, @Nullable Uri fileUri) {
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, DriveFileDownloader.DOWNLOAD_CHANNEL_ID)
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, DriveFileDownloader.DOWNLOAD_DONE_CHANNEL_ID)
                 .setContentTitle("Download complete")
                 .setContentText(fileName)
-                .setSmallIcon(android.R.drawable.stat_sys_download_done)
-                .setAutoCancel(true)
+                .setSmallIcon(R.drawable.ic_notification)                .setAutoCancel(true)
                 .setOngoing(false);
 
         if (fileUri != null) {
@@ -322,11 +348,10 @@ public class DriveDownloadService extends Service {
     }
 
     private Notification buildErrorNotification(String fileName, String message) {
-        return new NotificationCompat.Builder(this, DriveFileDownloader.DOWNLOAD_CHANNEL_ID)
+        return new NotificationCompat.Builder(this, DriveFileDownloader.DOWNLOAD_DONE_CHANNEL_ID)
                 .setContentTitle("Download failed")
                 .setContentText(fileName + ": " + message)
-                .setSmallIcon(android.R.drawable.stat_notify_error)
-                .setAutoCancel(true)
+                .setSmallIcon(R.drawable.ic_notification)                .setAutoCancel(true)
                 .setOngoing(false)
                 .build();
     }

@@ -1,4 +1,4 @@
-export function canOpenInNostrDocs(file: { type: string; name: string; chunks?: string[] }): boolean {
+export function canOpenInNostrDocs(file: { type: string; name: string; chunks?: unknown[] }): boolean {
   if (file.chunks && file.chunks.length > 0) {
     return false; // chunked payloads are not supported by the current Nostr Docs app
   }

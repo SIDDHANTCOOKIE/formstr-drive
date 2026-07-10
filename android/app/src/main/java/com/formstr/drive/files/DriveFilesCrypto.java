@@ -18,6 +18,8 @@ import javax.crypto.spec.SecretKeySpec;
 
 public final class DriveFilesCrypto {
     private static final byte PAYLOAD_VERSION = 2;
+    /** v3 chunk format: salt is not stored — re-derived from the chunk index on decrypt. */
+    private static final byte PAYLOAD_VERSION_V3 = 3;
     private static final int PAYLOAD_NONCE_LENGTH = 32;
     private static final int MESSAGE_KEY_LENGTH = 44;
     private static final byte[] NIP44_INFO = "nip44-v2".getBytes(StandardCharsets.UTF_8);
@@ -42,16 +44,34 @@ public final class DriveFilesCrypto {
             throws GeneralSecurityException {
         byte[] conversationKey = deriveConversationKey(privateKeyHex);
 
-        if (rawBlob.length <= PAYLOAD_NONCE_LENGTH + 1) {
+        if (rawBlob.length < 2) {
             throw new GeneralSecurityException("Encrypted chunk payload is too short");
         }
 
-        if (rawBlob[0] != PAYLOAD_VERSION) {
+        // Big-endian chunk index — the HKDF salt seed (v3) and the GCM AAD (both versions).
+        byte[] indexBytes = new byte[4];
+        indexBytes[0] = (byte) ((chunkIndex >> 24) & 0xFF);
+        indexBytes[1] = (byte) ((chunkIndex >> 16) & 0xFF);
+        indexBytes[2] = (byte) ((chunkIndex >> 8) & 0xFF);
+        indexBytes[3] = (byte) (chunkIndex & 0xFF);
+
+        byte version = rawBlob[0];
+        byte[] salt;
+        byte[] ciphertext;
+        if (version == PAYLOAD_VERSION_V3) {
+            // Salt was not stored — re-derive it deterministically from the index.
+            salt = hmacSha256(conversationKey, indexBytes);
+            ciphertext = Arrays.copyOfRange(rawBlob, 1, rawBlob.length);
+        } else if (version == PAYLOAD_VERSION) {
+            // Legacy: salt is prepended to the payload.
+            if (rawBlob.length <= PAYLOAD_NONCE_LENGTH + 1) {
+                throw new GeneralSecurityException("Encrypted chunk payload is too short");
+            }
+            salt = Arrays.copyOfRange(rawBlob, 1, 1 + PAYLOAD_NONCE_LENGTH);
+            ciphertext = Arrays.copyOfRange(rawBlob, 1 + PAYLOAD_NONCE_LENGTH, rawBlob.length);
+        } else {
             throw new GeneralSecurityException("Unsupported encrypted payload version");
         }
-
-        byte[] salt = Arrays.copyOfRange(rawBlob, 1, 1 + PAYLOAD_NONCE_LENGTH);
-        byte[] ciphertext = Arrays.copyOfRange(rawBlob, 1 + PAYLOAD_NONCE_LENGTH, rawBlob.length);
 
         byte[] expandedKeys = hkdfSha256(conversationKey, salt, NIP44_INFO, MESSAGE_KEY_LENGTH);
         byte[] aesKey = Arrays.copyOfRange(expandedKeys, 0, 32);
@@ -62,12 +82,6 @@ public final class DriveFilesCrypto {
                 Cipher.DECRYPT_MODE,
                 new SecretKeySpec(aesKey, "AES"),
                 new GCMParameterSpec(128, aesNonce));
-
-        byte[] indexBytes = new byte[4];
-        indexBytes[0] = (byte) ((chunkIndex >> 24) & 0xFF);
-        indexBytes[1] = (byte) ((chunkIndex >> 16) & 0xFF);
-        indexBytes[2] = (byte) ((chunkIndex >> 8) & 0xFF);
-        indexBytes[3] = (byte) (chunkIndex & 0xFF);
 
         cipher.updateAAD(indexBytes);
 

@@ -1,7 +1,9 @@
 package com.formstr.drive.files;
 
 import android.Manifest;
+import android.app.NotificationManager;
 import android.content.ContentValues;
+import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
@@ -10,8 +12,11 @@ import android.provider.MediaStore;
 import android.util.Base64;
 
 import androidx.annotation.Nullable;
+import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
+
+import com.formstr.drive.R;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -396,6 +401,21 @@ public class DriveFilesPlugin extends Plugin implements DriveDownloadService.Eve
     }
 
     @PluginMethod
+    public void getActiveDownloads(PluginCall call) {
+        JSArray downloads = new JSArray();
+        for (DriveDownloadService.ActiveDownload active : DriveDownloadService.activeDownloads()) {
+            JSObject item = new JSObject();
+            item.put("id", active.id);
+            item.put("fileName", active.fileName);
+            item.put("percent", active.percent);
+            downloads.put(item);
+        }
+        JSObject response = new JSObject();
+        response.put("downloads", downloads);
+        call.resolve(response);
+    }
+
+    @PluginMethod
     public void openFile(PluginCall call) {
         String uriString = call.getString("uri");
         String mimeType = call.getString("mimeType");
@@ -574,5 +594,79 @@ public class DriveFilesPlugin extends Plugin implements DriveDownloadService.Eve
 
         DriveUploadService.cancel(uploadId);
         call.resolve();
+    }
+
+    // Lightweight, JS-driven upload notification. The in-app (OPFS) upload path
+    // runs no foreground service, so the JS layer posts/updates/clears a plain
+    // progress notification directly. Reuses DriveUploadService's channels.
+
+    @PluginMethod
+    public void showUploadNotification(PluginCall call) {
+        String id = call.getString("id");
+        String fileName = call.getString("fileName", "file");
+        Integer percent = call.getInt("percent", 0);
+        if (id == null) {
+            call.reject("id is required");
+            return;
+        }
+
+        NotificationManager nm = (NotificationManager) getContext().getSystemService(Context.NOTIFICATION_SERVICE);
+        DriveUploadService.ensureNotificationChannel(nm);
+
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(getContext(), DriveUploadService.UPLOAD_CHANNEL_ID)
+                .setContentTitle("Uploading " + fileName)
+                .setSmallIcon(R.drawable.ic_notification)                .setProgress(100, percent != null ? percent : 0, false)
+                .setOngoing(true)
+                .setSilent(true);
+        nm.notify(uploadProgressNotifId(id), builder.build());
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void finishUploadNotification(PluginCall call) {
+        String id = call.getString("id");
+        String fileName = call.getString("fileName", "file");
+        Boolean ok = call.getBoolean("ok", Boolean.TRUE);
+        String message = call.getString("message");
+        if (id == null) {
+            call.reject("id is required");
+            return;
+        }
+
+        NotificationManager nm = (NotificationManager) getContext().getSystemService(Context.NOTIFICATION_SERVICE);
+        DriveUploadService.ensureNotificationChannel(nm);
+        nm.cancel(uploadProgressNotifId(id));
+
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(getContext(), DriveUploadService.UPLOAD_DONE_CHANNEL_ID);
+        if (ok == null || ok) {
+            builder.setContentTitle("Upload complete").setContentText(fileName);
+        } else {
+            builder.setContentTitle("Upload failed")
+                    .setContentText(message != null ? fileName + ": " + message : fileName);
+        }
+        builder.setSmallIcon(R.drawable.ic_notification)                .setAutoCancel(true)
+                .setOngoing(false);
+        nm.notify(uploadResultNotifId(id), builder.build());
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void clearUploadNotification(PluginCall call) {
+        String id = call.getString("id");
+        if (id == null) {
+            call.reject("id is required");
+            return;
+        }
+        NotificationManager nm = (NotificationManager) getContext().getSystemService(Context.NOTIFICATION_SERVICE);
+        nm.cancel(uploadProgressNotifId(id));
+        call.resolve();
+    }
+
+    private static int uploadProgressNotifId(String id) {
+        return id.hashCode() & 0x7fffffff;
+    }
+
+    private static int uploadResultNotifId(String id) {
+        return (id + ":result").hashCode() & 0x7fffffff;
     }
 }

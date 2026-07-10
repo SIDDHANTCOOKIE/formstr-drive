@@ -1,5 +1,5 @@
 import { BlossomClient } from "../blossom";
-import type { FileMetadata } from "../types/metadata";
+import { chunkHashes, type FileMetadata } from "../types/metadata";
 import { aesGcmDecryptBytes, decryptFileWithKey, deriveConversationKeyFromHex } from "../crypto";
 import { downloadViaServiceWorker, hasServiceWorkerSupport } from "./swStreamDownload";
 
@@ -42,14 +42,15 @@ function throwIfAborted(signal?: AbortSignal): void {
 export async function downloadAndDecryptFile(file: FileMetadata, signal?: AbortSignal): Promise<Uint8Array> {
   const client = new BlossomClient(file.server);
 
-  if (file.chunks && file.chunks.length > 0) {
+  const hashes = chunkHashes(file.chunks);
+  if (hashes.length > 0) {
     const convKey = deriveConversationKeyFromHex(file.encryptionKey);
     const result = new Uint8Array(file.size);
     let offset = 0;
 
-    for (let i = 0; i < file.chunks.length; i++) {
+    for (let i = 0; i < hashes.length; i++) {
       throwIfAborted(signal);
-      const hash = file.chunks[i];
+      const hash = hashes[i];
       const encBytes = await client.download(hash, undefined, undefined, signal);
       const decBytes = await aesGcmDecryptBytes(encBytes, convKey, i);
 
@@ -127,9 +128,9 @@ async function downloadViaFileSystemAccess(
   const client = new BlossomClient(file.server);
 
   try {
-    if (file.chunks && file.chunks.length > 0) {
+    const chunks = chunkHashes(file.chunks);
+    if (chunks.length > 0) {
       const convKey = deriveConversationKeyFromHex(file.encryptionKey);
-      const chunks = file.chunks;
       const totalChunks = chunks.length;
 
       const fetchDecrypt = async (index: number): Promise<Uint8Array> => {

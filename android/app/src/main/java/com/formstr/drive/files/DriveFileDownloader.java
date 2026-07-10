@@ -23,6 +23,8 @@ import java.util.List;
  */
 public final class DriveFileDownloader {
     public static final String DOWNLOAD_CHANNEL_ID = "formstr_drive_downloads";
+    /** Separate channel for terminal (complete/error) alerts so they can sound/vibrate. */
+    public static final String DOWNLOAD_DONE_CHANNEL_ID = "formstr_drive_downloads_done";
 
     public interface ProgressCallback {
         void onProgress(int percent);
@@ -33,13 +35,23 @@ public final class DriveFileDownloader {
 
     public static void ensureNotificationChannel(NotificationManager nm) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
-        if (nm.getNotificationChannel(DOWNLOAD_CHANNEL_ID) != null) return;
-        NotificationChannel channel = new NotificationChannel(
-                DOWNLOAD_CHANNEL_ID, "Form* Drive Downloads", NotificationManager.IMPORTANCE_LOW
-        );
-        channel.setDescription("File download progress");
-        channel.setSound(null, null);
-        nm.createNotificationChannel(channel);
+        // Progress channel: silent + low importance so ongoing updates don't buzz.
+        if (nm.getNotificationChannel(DOWNLOAD_CHANNEL_ID) == null) {
+            NotificationChannel channel = new NotificationChannel(
+                    DOWNLOAD_CHANNEL_ID, "Form* Drive Downloads", NotificationManager.IMPORTANCE_LOW
+            );
+            channel.setDescription("File download progress");
+            channel.setSound(null, null);
+            nm.createNotificationChannel(channel);
+        }
+        // Terminal channel: default importance so complete/error alerts sound + vibrate.
+        if (nm.getNotificationChannel(DOWNLOAD_DONE_CHANNEL_ID) == null) {
+            NotificationChannel doneChannel = new NotificationChannel(
+                    DOWNLOAD_DONE_CHANNEL_ID, "Form* Drive Download Alerts", NotificationManager.IMPORTANCE_DEFAULT
+            );
+            doneChannel.setDescription("Download complete and error alerts");
+            nm.createNotificationChannel(doneChannel);
+        }
     }
 
     /**

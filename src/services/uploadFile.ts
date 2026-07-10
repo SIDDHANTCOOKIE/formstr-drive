@@ -9,6 +9,7 @@ export const CHUNK_SIZE = 50 * 1024 * 1024; // 50MB chunks
 export interface UploadResult {
   hashes: string[];
   size: number;
+  previewHash?: string;
 }
 
 export interface UploadProgressInfo {
@@ -205,10 +206,50 @@ export async function uploadFile(
   encryptionKeyHex: string,
   onProgress?: (info: UploadProgressInfo) => void,
   signal?: AbortSignal,
+  previewPromise?: Promise<Uint8Array | null>,
 ): Promise<UploadResult> {
   const client = new BlossomClient(serverUrl);
   const convKey = deriveConversationKeyFromHex(encryptionKeyHex);
   const totalSize = file.size;
+
+  // The preview (if any) is folded into the SAME upload auth as the file chunks
+  // so the user signs only once. It's awaited at signing time — not up front —
+  // so preview generation still overlaps chunk encryption, and it stays
+  // best-effort: a failed preview upload never fails the file.
+  async function finalizePreviewAuth(chunkHashesForAuth: string[]): Promise<{
+    authHeader: string;
+    previewHash?: string;
+    encryptedPreview?: Uint8Array;
+  }> {
+    const previewBytes = previewPromise ? await previewPromise : null;
+    let previewHash: string | undefined;
+    let encryptedPreview: Uint8Array | undefined;
+    if (previewBytes) {
+      const encrypted = await encryptFileWithExistingKey(previewBytes, encryptionKeyHex);
+      encryptedPreview = new TextEncoder().encode(encrypted);
+      const digest = await crypto.subtle.digest("SHA-256", encryptedPreview as unknown as BufferSource);
+      previewHash = toHexHash(digest);
+    }
+    const authHashes = previewHash ? [...chunkHashesForAuth, previewHash] : chunkHashesForAuth;
+    const authHeader = await createAuthEvent("upload", `Upload ${file.name}`, authHashes, 1800);
+    return { authHeader, previewHash, encryptedPreview };
+  }
+
+  async function uploadPreviewIfPresent(
+    encryptedPreview: Uint8Array | undefined,
+    authHeader: string,
+  ): Promise<boolean> {
+    if (!encryptedPreview) return false;
+    try {
+      onProgress?.({ stage: "Uploading preview...", progress: 99 });
+      await client.upload(encryptedPreview, authHeader, undefined, signal);
+      return true;
+    } catch (e) {
+      if ((e as Error)?.name === "AbortError") throw e;
+      console.warn("[Upload] Preview upload failed; continuing without preview", e);
+      return false;
+    }
+  }
 
   if (totalSize <= CHUNK_SIZE) {
     // Single chunk — no chunking needed
@@ -216,12 +257,14 @@ export async function uploadFile(
     onProgress?.({ stage: "Encrypting file...", progress: 0, currentChunk: 1, totalChunks: 1 });
     const bytes = new Uint8Array(await file.arrayBuffer());
     const encBytes = await aesGcmEncryptBytes(bytes, convKey, 0);
+    const hash = toHexHash(await crypto.subtle.digest("SHA-256", encBytes as unknown as BufferSource));
     throwIfAborted(signal);
     onProgress?.({ stage: "Waiting for signature approval...", progress: 20, currentChunk: 1, totalChunks: 1 });
-    const auth = await createAuthEvent("upload", `Upload ${file.name}`, encBytes);
-    const hash = await client.upload(encBytes, auth, undefined, signal);
+    const { authHeader, previewHash, encryptedPreview } = await finalizePreviewAuth([hash]);
+    await client.upload(encBytes, authHeader, undefined, signal);
+    const previewUploaded = await uploadPreviewIfPresent(encryptedPreview, authHeader);
     onProgress?.({ stage: "Upload complete", progress: 100, currentChunk: 1, totalChunks: 1 });
-    return { hashes: [hash], size: totalSize };
+    return { hashes: [hash], size: totalSize, previewHash: previewUploaded ? previewHash : undefined };
   }
 
   const numChunks = Math.ceil(totalSize / CHUNK_SIZE);
@@ -262,7 +305,7 @@ export async function uploadFile(
         currentChunk: numChunks,
         totalChunks: numChunks,
       });
-      const authHeader = await createAuthEvent("upload", `Upload ${file.name}`, hashes, 1800);
+      const { authHeader, previewHash, encryptedPreview } = await finalizePreviewAuth(hashes);
 
       // Pass 2: read the already-encrypted ciphertext back from OPFS and
       // upload it directly — no re-encryption needed.
@@ -291,7 +334,8 @@ export async function uploadFile(
         }
       }
 
-      return { hashes, size: totalSize };
+      const previewUploaded = await uploadPreviewIfPresent(encryptedPreview, authHeader);
+      return { hashes, size: totalSize, previewHash: previewUploaded ? previewHash : undefined };
     }
 
     // Fallback (OPFS unavailable): encrypt twice — deterministic encryption
@@ -320,7 +364,7 @@ export async function uploadFile(
       currentChunk: numChunks,
       totalChunks: numChunks,
     });
-    const authHeader = await createAuthEvent("upload", `Upload ${file.name}`, hashes, 1800);
+    const { authHeader, previewHash, encryptedPreview } = await finalizePreviewAuth(hashes);
 
     for (let i = 0; i < numChunks; i++) {
       throwIfAborted(signal);
@@ -348,7 +392,8 @@ export async function uploadFile(
       }
     }
 
-    return { hashes, size: totalSize };
+    const previewUploaded = await uploadPreviewIfPresent(encryptedPreview, authHeader);
+    return { hashes, size: totalSize, previewHash: previewUploaded ? previewHash : undefined };
   } finally {
     if (opfsTemp) {
       await removeOpfsTempDir(opfsTemp.name);
