@@ -1,4 +1,5 @@
 import { Preferences } from "@capacitor/preferences";
+import type { SecureKeyStoragePlugin } from "@khadarvsk/capacitor-secure-storage";
 import { isAndroidPlatform, isNativePlatform } from "./platform";
 
 export const STORAGE_KEYS = {
@@ -59,15 +60,24 @@ export async function removeStoredItem(key: string): Promise<void> {
   window.dispatchEvent(new Event("storage"));
 }
 
-async function getSecureKeyStorage() {
+// Load the Capacitor secure-storage plugin.
+//
+// IMPORTANT: we must NOT `return`/`await` the raw plugin proxy from an async
+// function. `registerPlugin` returns a Proxy that responds to *every* property
+// access — including `.then` — so promise-adoption machinery (any `await` or
+// `return` of the proxy from an async fn) will call `proxy.then(...)`, which
+// Capacitor forwards to native as an unimplemented method and throws
+// "SecureKeyStorage.then() is not implemented on android". That silently hangs
+// every secure read/write. Wrapping the proxy in a plain object avoids the trap.
+async function getSecureKeyStorage(): Promise<{ plugin: SecureKeyStoragePlugin }> {
   const module = await import("@khadarvsk/capacitor-secure-storage");
-  return module.default;
+  return { plugin: module.default };
 }
 
 export async function getStoredSecret(key: string): Promise<string | null> {
   if (isNativePlatform && isAndroidPlatform) {
-    const secureStorage = await getSecureKeyStorage();
-    const { value } = await secureStorage.get({ key });
+    const { plugin } = await getSecureKeyStorage();
+    const { value } = await plugin.get({ key });
     return value;
   }
 
@@ -81,8 +91,8 @@ export async function getStoredSecret(key: string): Promise<string | null> {
 
 export async function setStoredSecret(key: string, value: string): Promise<void> {
   if (isNativePlatform && isAndroidPlatform) {
-    const secureStorage = await getSecureKeyStorage();
-    await secureStorage.set({ key, value });
+    const { plugin } = await getSecureKeyStorage();
+    await plugin.set({ key, value });
     return;
   }
 
@@ -96,8 +106,8 @@ export async function setStoredSecret(key: string, value: string): Promise<void>
 
 export async function removeStoredSecret(key: string): Promise<void> {
   if (isNativePlatform && isAndroidPlatform) {
-    const secureStorage = await getSecureKeyStorage();
-    await secureStorage.remove({ key });
+    const { plugin } = await getSecureKeyStorage();
+    await plugin.remove({ key });
     return;
   }
 

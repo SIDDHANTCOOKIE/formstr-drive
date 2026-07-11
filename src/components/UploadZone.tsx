@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef } from "react";
 import { useFileIndex } from "../hooks/useFileContext";
 import { useBlossomServer } from "../hooks/useBlossomServer";
+import { isAbortError } from "../utils/abortError";
 
 function getHostname(url: string): string {
   try {
@@ -11,7 +12,7 @@ function getHostname(url: string): string {
 }
 
 export function UploadZone() {
-  const { uploadFile, uploadProgress } = useFileIndex();
+  const { uploadFile } = useFileIndex();
   const { servers, selectedServer, setSelectedServer, addCustomServer } = useBlossomServer();
   const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -32,6 +33,9 @@ export function UploadZone() {
         try {
           await uploadFile(file, selectedServer);
         } catch (e) {
+          if (isAbortError(e)) {
+            break;
+          }
           errors.push(`${file.name}: ${e instanceof Error ? e.message : "Upload failed"}`);
         }
       }
@@ -105,9 +109,7 @@ export function UploadZone() {
         />
         {uploading ? (
           <span className="upload-status">
-            {uploadProgress
-              ? `${uploadProgress.fileName} — ${uploadProgress.stage}`
-              : "Uploading..."}
+            Uploading...
           </span>
         ) : (
           <span className="upload-prompt">

@@ -1,6 +1,37 @@
-import { registerPlugin } from "@capacitor/core";
-import type { FileMetadata } from "../types/metadata";
+import { registerPlugin, type PluginListenerHandle } from "@capacitor/core";
+import { chunkHashes, type ChunkRef, type FileMetadata } from "../types/metadata";
 import { isAndroidPlatform } from "../utils/platform";
+
+export interface NativeDownloadStartedEvent {
+  id: string;
+}
+
+export interface NativeDownloadEvent {
+  id: string;
+  type: "progress" | "complete" | "error" | "cancelled";
+  percent?: number;
+  uri?: string;
+  message?: string;
+}
+
+export interface NativeUploadEvent {
+  id: string;
+  type: "progress" | "complete" | "error" | "cancelled";
+  percent?: number;
+  message?: string;
+}
+
+export interface NativeActiveDownload {
+  id: string;
+  fileName: string;
+  percent: number;
+}
+
+export interface NativeUploadBlob {
+  path: string;
+  hash: string;
+  contentType?: string;
+}
 
 type DriveFilesPlugin = {
   updateManifest(options: { manifestJson: string }): Promise<void>;
@@ -16,7 +47,46 @@ type DriveFilesPlugin = {
   }>;
   removePendingImport(options: { id: string }): Promise<void>;
   saveToDownloads(options: { base64: string; fileName: string; mimeType: string }): Promise<{ uri: string }>;
+  downloadToDownloads(options: {
+    server: string;
+    chunks?: string[];
+    hash: string;
+    encryptionKey: string;
+    fileName: string;
+    mimeType: string;
+    size: number;
+  }): Promise<{ uri: string }>;
+  cancelDownload(options: { id: string }): Promise<void>;
+  getActiveDownloads(): Promise<{ downloads: NativeActiveDownload[] }>;
   openFile(options: { uri: string; mimeType: string }): Promise<void>;
+  requestNotificationPermission(): Promise<{ granted: boolean }>;
+  startUploadService(options: { uploadId: string; fileName: string }): Promise<void>;
+  stageUploadChunk(options: { uploadId: string; index: number; base64: string }): Promise<{ path: string }>;
+  startNativeUpload(options: {
+    uploadId: string;
+    server: string;
+    fileName: string;
+    authHeader: string;
+    metadataEventJson: string;
+    blobs: NativeUploadBlob[];
+    relays: string[];
+  }): Promise<void>;
+  cancelNativeUpload(options: { uploadId: string }): Promise<void>;
+  showUploadNotification(options: { id: string; fileName: string; percent: number }): Promise<void>;
+  finishUploadNotification(options: { id: string; fileName: string; ok: boolean; message?: string }): Promise<void>;
+  clearUploadNotification(options: { id: string }): Promise<void>;
+  addListener(
+    eventName: "downloadStarted",
+    listenerFunc: (event: NativeDownloadStartedEvent) => void,
+  ): Promise<PluginListenerHandle>;
+  addListener(
+    eventName: "downloadEvent",
+    listenerFunc: (event: NativeDownloadEvent) => void,
+  ): Promise<PluginListenerHandle>;
+  addListener(
+    eventName: "uploadEvent",
+    listenerFunc: (event: NativeUploadEvent) => void,
+  ): Promise<PluginListenerHandle>;
 };
 
 export const ROOT_DOCUMENT_ID = "root";
@@ -42,6 +112,7 @@ export interface NativeDriveFileEntry {
   server: string;
   encryptionKey: string;
   previewHash?: string;
+  chunks?: string[];
 }
 
 export interface NativeDriveManifest {
@@ -189,6 +260,7 @@ export function buildNativeDriveManifest(
       server: file.server,
       encryptionKey: file.encryptionKey,
       ...(file.previewHash ? { previewHash: file.previewHash } : {}),
+      ...(file.chunks ? { chunks: chunkHashes(file.chunks) } : {}),
     };
   });
 
@@ -303,8 +375,246 @@ export async function saveFileToDownloads(
   return null;
 }
 
+export async function downloadFileToDownloads(
+  file: {
+    server: string;
+    chunks?: ChunkRef[];
+    hash: string;
+    encryptionKey: string;
+    name: string;
+    type?: string;
+    size: number;
+  },
+  onProgress?: (percent: number) => void,
+  onStarted?: (cancel: () => void) => void,
+): Promise<{ uri: string }> {
+  if (!isAndroidPlatform || !driveFilesPlugin) {
+    throw new Error("Native download is only available on Android");
+  }
+  const plugin = driveFilesPlugin;
+
+  const listeners: PluginListenerHandle[] = [];
+  try {
+    listeners.push(
+      await plugin.addListener("downloadStarted", (event) => {
+        onStarted?.(() => {
+          void plugin.cancelDownload({ id: event.id });
+        });
+      }),
+    );
+    listeners.push(
+      await plugin.addListener("downloadEvent", (event) => {
+        if (event.type === "progress" && typeof event.percent === "number") {
+          onProgress?.(event.percent);
+        }
+      }),
+    );
+
+    return await plugin.downloadToDownloads({
+      server: file.server,
+      chunks: chunkHashes(file.chunks),
+      hash: file.hash,
+      encryptionKey: file.encryptionKey,
+      fileName: file.name,
+      mimeType: file.type || "application/octet-stream",
+      size: file.size,
+    });
+  } catch (e) {
+    if ((e as { code?: string })?.code === "ABORT_ERR") {
+      throw new DOMException("Download cancelled", "AbortError");
+    }
+    throw e;
+  } finally {
+    for (const listener of listeners) {
+      await listener.remove();
+    }
+  }
+}
+
 export async function openDownloadedFile(uri: string, mimeType: string): Promise<void> {
   if (isAndroidPlatform && driveFilesPlugin) {
     await driveFilesPlugin.openFile({ uri, mimeType });
   }
+}
+
+/**
+ * Prompts for POST_NOTIFICATIONS on the user's first transfer (Android 13+
+ * only asks once — subsequent calls resolve instantly from cached state).
+ * Callers should proceed with the transfer regardless of the result; a denial
+ * just means the ongoing/completion notification won't show.
+ */
+export async function ensureNotificationPermission(): Promise<boolean> {
+  if (!isAndroidPlatform || !driveFilesPlugin) {
+    return true;
+  }
+  const { granted } = await driveFilesPlugin.requestNotificationPermission();
+  return granted;
+}
+
+/**
+ * Starts the upload foreground service in its PREPARING phase, so a persistent
+ * notification appears immediately — while JS is still encrypting/staging —
+ * rather than only once the network phase begins. No-op off Android.
+ */
+export async function startNativeUploadService(uploadId: string, fileName: string): Promise<void> {
+  if (!isAndroidPlatform || !driveFilesPlugin) {
+    return;
+  }
+  await driveFilesPlugin.startUploadService({ uploadId, fileName });
+}
+
+/**
+ * Writes one pre-encrypted upload blob (a chunk or the preview) to
+ * app-private storage so the native upload worker can PUT it without any
+ * JS/crypto involvement. Called during the foreground prepare phase, one
+ * chunk at a time, to keep peak memory bounded.
+ */
+export async function stageNativeUploadChunk(
+  uploadId: string,
+  index: number,
+  bytes: Uint8Array,
+): Promise<string> {
+  if (!isAndroidPlatform || !driveFilesPlugin) {
+    throw new Error("Native upload staging is only available on Android");
+  }
+  const base64 = uint8ArrayToBase64(bytes);
+  const { path } = await driveFilesPlugin.stageUploadChunk({ uploadId, index, base64 });
+  return path;
+}
+
+/**
+ * Hands a fully-prepared upload (staged ciphertext blobs, a pre-signed
+ * Blossom auth header, and a pre-signed metadata event) off to the native
+ * DriveUploadService, which PUTs the blobs and publishes the metadata event
+ * with no signer/crypto involvement — so it can keep running after the app
+ * is swiped away. Resolves when the native side reports completion, rejects
+ * on error, and rejects with an AbortError-shaped DOMException on cancel.
+ */
+export async function startNativeUpload(
+  options: {
+    uploadId: string;
+    server: string;
+    fileName: string;
+    authHeader: string;
+    metadataEventJson: string;
+    blobs: NativeUploadBlob[];
+    relays: string[];
+  },
+  onEvent?: (event: NativeUploadEvent) => void,
+): Promise<void> {
+  if (!isAndroidPlatform || !driveFilesPlugin) {
+    throw new Error("Native upload is only available on Android");
+  }
+  const plugin = driveFilesPlugin;
+
+  let listener: PluginListenerHandle | null = null;
+  try {
+    if (onEvent) {
+      listener = await plugin.addListener("uploadEvent", (event) => {
+        if (event.id === options.uploadId) {
+          onEvent(event);
+        }
+      });
+    }
+    await plugin.startNativeUpload(options);
+  } catch (e) {
+    if ((e as { code?: string })?.code === "ABORT_ERR") {
+      throw new DOMException("Upload cancelled", "AbortError");
+    }
+    throw e;
+  } finally {
+    await listener?.remove();
+  }
+}
+
+export async function cancelNativeUpload(uploadId: string): Promise<void> {
+  if (!isAndroidPlatform || !driveFilesPlugin) {
+    return;
+  }
+  await driveFilesPlugin.cancelNativeUpload({ uploadId });
+}
+
+/**
+ * Lightweight, JS-driven upload notification for the in-app (OPFS) upload path,
+ * which runs no foreground service. Best-effort and a no-op off Android.
+ */
+export async function showUploadNotification(id: string, fileName: string, percent: number): Promise<void> {
+  if (!isAndroidPlatform || !driveFilesPlugin) {
+    return;
+  }
+  await driveFilesPlugin.showUploadNotification({ id, fileName, percent });
+}
+
+export async function finishUploadNotification(
+  id: string,
+  fileName: string,
+  ok: boolean,
+  message?: string,
+): Promise<void> {
+  if (!isAndroidPlatform || !driveFilesPlugin) {
+    return;
+  }
+  await driveFilesPlugin.finishUploadNotification({ id, fileName, ok, message });
+}
+
+export async function clearUploadNotification(id: string): Promise<void> {
+  if (!isAndroidPlatform || !driveFilesPlugin) {
+    return;
+  }
+  await driveFilesPlugin.clearUploadNotification({ id });
+}
+
+/**
+ * Subscribes to native upload events for one uploadId — used during the
+ * PREPARING phase (before startNativeUpload runs) so a notification "Cancel"
+ * tapped mid-staging can abort the JS encrypt/stage loop too. Returns null off
+ * Android; caller must remove the handle when the prepare phase ends.
+ */
+export async function subscribeNativeUploadEvents(
+  uploadId: string,
+  onEvent: (event: NativeUploadEvent) => void,
+): Promise<PluginListenerHandle | null> {
+  if (!isAndroidPlatform || !driveFilesPlugin) {
+    return null;
+  }
+  return driveFilesPlugin.addListener("uploadEvent", (event) => {
+    if (event.id === uploadId) {
+      onEvent(event);
+    }
+  });
+}
+
+/**
+ * Downloads still running in the native foreground service — used to rehydrate
+ * in-app progress after the app is reopened (the JS/React state is gone but the
+ * service kept running). Returns an empty list off Android.
+ */
+export async function getActiveDownloads(): Promise<NativeActiveDownload[]> {
+  if (!isAndroidPlatform || !driveFilesPlugin) {
+    return [];
+  }
+  const { downloads } = await driveFilesPlugin.getActiveDownloads();
+  return downloads;
+}
+
+/**
+ * Subscribes to native download events across all in-flight downloads (unlike
+ * downloadFileToDownloads, whose listeners are scoped to a single call). Used
+ * to keep a rehydrated progress card live until the download finishes. Returns
+ * null off Android; caller must remove the handle.
+ */
+export async function subscribeNativeDownloadEvents(
+  onEvent: (event: NativeDownloadEvent) => void,
+): Promise<PluginListenerHandle | null> {
+  if (!isAndroidPlatform || !driveFilesPlugin) {
+    return null;
+  }
+  return driveFilesPlugin.addListener("downloadEvent", (event) => onEvent(event));
+}
+
+export async function cancelNativeDownload(id: string): Promise<void> {
+  if (!isAndroidPlatform || !driveFilesPlugin) {
+    return;
+  }
+  await driveFilesPlugin.cancelDownload({ id });
 }

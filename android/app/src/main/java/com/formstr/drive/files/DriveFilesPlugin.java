@@ -1,6 +1,9 @@
 package com.formstr.drive.files;
 
+import android.Manifest;
+import android.app.NotificationManager;
 import android.content.ContentValues;
+import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
@@ -8,23 +11,145 @@ import android.os.Environment;
 import android.provider.MediaStore;
 import android.util.Base64;
 
+import androidx.annotation.Nullable;
+import androidx.core.app.NotificationCompat;
+import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
+
+import com.formstr.drive.R;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
+import com.getcapacitor.PermissionState;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import com.getcapacitor.annotation.Permission;
+import com.getcapacitor.annotation.PermissionCallback;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
-@CapacitorPlugin(name = "DriveFiles")
-public class DriveFilesPlugin extends Plugin {
+@CapacitorPlugin(
+        name = "DriveFiles",
+        permissions = {
+                @Permission(strings = { Manifest.permission.POST_NOTIFICATIONS }, alias = "notifications")
+        }
+)
+public class DriveFilesPlugin extends Plugin implements DriveDownloadService.EventListener, DriveUploadService.EventListener {
+
+    private final Map<String, PluginCall> pendingDownloadCalls = new ConcurrentHashMap<>();
+    private final Map<String, PluginCall> pendingUploadCalls = new ConcurrentHashMap<>();
+
+    @Override
+    protected void handleOnStart() {
+        super.handleOnStart();
+        DriveDownloadService.addListener(this);
+        DriveUploadService.addListener(this);
+        sweepOrphanedUploadDirs();
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        DriveDownloadService.removeListener(this);
+        DriveUploadService.removeListener(this);
+        super.handleOnDestroy();
+    }
+
+    /** Deletes staged-chunk directories left behind by a crash/kill, but never ones an active worker is using. */
+    private void sweepOrphanedUploadDirs() {
+        try {
+            File uploadsRoot = new File(getContext().getFilesDir(), "uploads");
+            File[] dirs = uploadsRoot.listFiles();
+            if (dirs == null) return;
+
+            Set<String> activeIds = DriveUploadService.activeIds();
+            for (File dir : dirs) {
+                if (dir.isDirectory() && !activeIds.contains(dir.getName())) {
+                    deleteRecursive(dir);
+                }
+            }
+        } catch (Exception ignored) {
+            // best-effort crash cleanup
+        }
+    }
+
+    private static void deleteRecursive(File file) {
+        File[] children = file.listFiles();
+        if (children != null) {
+            for (File child : children) {
+                deleteRecursive(child);
+            }
+        }
+        file.delete();
+    }
+
+    @Override
+    public void onUploadEvent(String type, String id, @Nullable Integer percent, @Nullable String message) {
+        JSObject data = new JSObject();
+        data.put("id", id);
+        data.put("type", type);
+        if (percent != null) data.put("percent", percent);
+        if (message != null) data.put("message", message);
+        notifyListeners("uploadEvent", data);
+
+        PluginCall call = pendingUploadCalls.get(id);
+        if (call == null) {
+            return;
+        }
+
+        if (DriveUploadService.EVENT_COMPLETE.equals(type)) {
+            pendingUploadCalls.remove(id);
+            call.resolve();
+        } else if (DriveUploadService.EVENT_ERROR.equals(type)) {
+            pendingUploadCalls.remove(id);
+            call.reject(message != null ? message : "Upload failed");
+        } else if (DriveUploadService.EVENT_CANCELLED.equals(type)) {
+            pendingUploadCalls.remove(id);
+            call.reject("Upload cancelled", "ABORT_ERR");
+        }
+    }
+
+    @Override
+    public void onDownloadEvent(String type, String id, @Nullable Integer percent, @Nullable String uri, @Nullable String message) {
+        JSObject data = new JSObject();
+        data.put("id", id);
+        data.put("type", type);
+        if (percent != null) data.put("percent", percent);
+        if (uri != null) data.put("uri", uri);
+        if (message != null) data.put("message", message);
+        notifyListeners("downloadEvent", data);
+
+        PluginCall call = pendingDownloadCalls.get(id);
+        if (call == null) {
+            return;
+        }
+
+        if (DriveDownloadService.EVENT_COMPLETE.equals(type)) {
+            pendingDownloadCalls.remove(id);
+            JSObject response = new JSObject();
+            response.put("uri", uri);
+            call.resolve(response);
+        } else if (DriveDownloadService.EVENT_ERROR.equals(type)) {
+            pendingDownloadCalls.remove(id);
+            call.reject(message != null ? message : "Download failed");
+        } else if (DriveDownloadService.EVENT_CANCELLED.equals(type)) {
+            pendingDownloadCalls.remove(id);
+            call.reject("Download cancelled", "ABORT_ERR");
+        }
+    }
 
     @PluginMethod
     public void updateManifest(PluginCall call) {
@@ -204,6 +329,93 @@ public class DriveFilesPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void downloadToDownloads(PluginCall call) {
+        String server = call.getString("server");
+        String hash = call.getString("hash");
+        String encryptionKey = call.getString("encryptionKey");
+        String fileName = call.getString("fileName");
+        String mimeType = call.getString("mimeType");
+        JSArray chunksArray = call.getArray("chunks");
+
+        if (server == null || hash == null || encryptionKey == null || fileName == null || mimeType == null) {
+            call.reject("server, hash, encryptionKey, fileName, and mimeType are required");
+            return;
+        }
+
+        startDownload(call);
+    }
+
+    private void startDownload(PluginCall call) {
+        String server = call.getString("server");
+        String hash = call.getString("hash");
+        String encryptionKey = call.getString("encryptionKey");
+        String fileName = call.getString("fileName");
+        String mimeType = call.getString("mimeType");
+        JSArray chunksArray = call.getArray("chunks");
+
+        JSONArray chunksJson = null;
+        if (chunksArray != null) {
+            try {
+                chunksJson = new JSONArray();
+                for (int i = 0; i < chunksArray.length(); i++) {
+                    chunksJson.put(chunksArray.getString(i));
+                }
+            } catch (JSONException error) {
+                call.reject("Invalid chunks array", error);
+                return;
+            }
+        }
+
+        String downloadId = UUID.randomUUID().toString();
+        pendingDownloadCalls.put(downloadId, call);
+        call.setKeepAlive(true);
+
+        Intent intent = new Intent(getContext(), DriveDownloadService.class);
+        intent.putExtra(DriveDownloadService.EXTRA_ID, downloadId);
+        intent.putExtra(DriveDownloadService.EXTRA_SERVER, server);
+        intent.putExtra(DriveDownloadService.EXTRA_HASH, hash);
+        intent.putExtra(DriveDownloadService.EXTRA_ENCRYPTION_KEY, encryptionKey);
+        intent.putExtra(DriveDownloadService.EXTRA_FILE_NAME, fileName);
+        intent.putExtra(DriveDownloadService.EXTRA_MIME_TYPE, mimeType);
+        if (chunksJson != null) {
+            intent.putExtra(DriveDownloadService.EXTRA_CHUNKS_JSON, chunksJson.toString());
+        }
+
+        ContextCompat.startForegroundService(getContext(), intent);
+
+        JSObject started = new JSObject();
+        started.put("id", downloadId);
+        notifyListeners("downloadStarted", started);
+    }
+
+    @PluginMethod
+    public void cancelDownload(PluginCall call) {
+        String id = call.getString("id");
+        if (id == null) {
+            call.reject("id is required");
+            return;
+        }
+
+        DriveDownloadService.cancel(id);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void getActiveDownloads(PluginCall call) {
+        JSArray downloads = new JSArray();
+        for (DriveDownloadService.ActiveDownload active : DriveDownloadService.activeDownloads()) {
+            JSObject item = new JSObject();
+            item.put("id", active.id);
+            item.put("fileName", active.fileName);
+            item.put("percent", active.percent);
+            downloads.put(item);
+        }
+        JSObject response = new JSObject();
+        response.put("downloads", downloads);
+        call.resolve(response);
+    }
+
+    @PluginMethod
     public void openFile(PluginCall call) {
         String uriString = call.getString("uri");
         String mimeType = call.getString("mimeType");
@@ -249,5 +461,212 @@ public class DriveFilesPlugin extends Plugin {
 
             return outputStream.toByteArray();
         }
+    }
+
+    @PluginMethod
+    public void requestNotificationPermission(PluginCall call) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+                || getPermissionState("notifications") == PermissionState.GRANTED) {
+            JSObject response = new JSObject();
+            response.put("granted", true);
+            call.resolve(response);
+            return;
+        }
+
+        requestPermissionForAlias("notifications", call, "notificationPermissionResult");
+    }
+
+    @PermissionCallback
+    private void notificationPermissionResult(PluginCall call) {
+        JSObject response = new JSObject();
+        response.put("granted", getPermissionState("notifications") == PermissionState.GRANTED);
+        call.resolve(response);
+    }
+
+    @PluginMethod
+    public void startUploadService(PluginCall call) {
+        String uploadId = call.getString("uploadId");
+        String fileName = call.getString("fileName", "file");
+        if (uploadId == null) {
+            call.reject("uploadId is required");
+            return;
+        }
+
+        Intent intent = new Intent(getContext(), DriveUploadService.class);
+        intent.setAction(DriveUploadService.ACTION_PREPARE);
+        intent.putExtra(DriveUploadService.EXTRA_ID, uploadId);
+        intent.putExtra(DriveUploadService.EXTRA_FILE_NAME, fileName);
+        ContextCompat.startForegroundService(getContext(), intent);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void stageUploadChunk(PluginCall call) {
+        String uploadId = call.getString("uploadId");
+        Integer index = call.getInt("index");
+        String base64 = call.getString("base64");
+
+        if (uploadId == null || index == null || base64 == null) {
+            call.reject("uploadId, index, and base64 are required");
+            return;
+        }
+
+        try {
+            byte[] bytes = Base64.decode(base64, Base64.NO_WRAP);
+            File dir = new File(new File(getContext().getFilesDir(), "uploads"), uploadId);
+            if (!dir.exists()) {
+                dir.mkdirs();
+            }
+            File chunkFile = new File(dir, "chunk-" + index + ".bin");
+            try (FileOutputStream out = new FileOutputStream(chunkFile)) {
+                out.write(bytes);
+            }
+
+            JSObject response = new JSObject();
+            response.put("path", chunkFile.getAbsolutePath());
+            call.resolve(response);
+        } catch (Exception error) {
+            call.reject("Failed to stage upload chunk", error);
+        }
+    }
+
+    @PluginMethod
+    public void startNativeUpload(PluginCall call) {
+        String uploadId = call.getString("uploadId");
+        String server = call.getString("server");
+        String fileName = call.getString("fileName", "file");
+        String authHeader = call.getString("authHeader");
+        String metadataEventJson = call.getString("metadataEventJson");
+        JSArray blobsArray = call.getArray("blobs");
+        JSArray relaysArray = call.getArray("relays");
+
+        if (uploadId == null || server == null || authHeader == null || metadataEventJson == null
+                || blobsArray == null || relaysArray == null) {
+            call.reject("uploadId, server, authHeader, metadataEventJson, blobs, and relays are required");
+            return;
+        }
+
+        JSONArray blobsJson;
+        JSONArray relaysJson;
+        try {
+            blobsJson = new JSONArray();
+            for (int i = 0; i < blobsArray.length(); i++) {
+                JSONObject blob = blobsArray.getJSONObject(i);
+                JSONObject entry = new JSONObject();
+                entry.put("path", blob.getString("path"));
+                entry.put("hash", blob.getString("hash"));
+                entry.put("contentType", blob.optString("contentType", "application/octet-stream"));
+                blobsJson.put(entry);
+            }
+
+            relaysJson = new JSONArray();
+            for (int i = 0; i < relaysArray.length(); i++) {
+                relaysJson.put(relaysArray.getString(i));
+            }
+        } catch (JSONException error) {
+            call.reject("Invalid blobs or relays array", error);
+            return;
+        }
+
+        pendingUploadCalls.put(uploadId, call);
+        call.setKeepAlive(true);
+
+        Intent intent = new Intent(getContext(), DriveUploadService.class);
+        intent.setAction(DriveUploadService.ACTION_START);
+        intent.putExtra(DriveUploadService.EXTRA_ID, uploadId);
+        intent.putExtra(DriveUploadService.EXTRA_SERVER, server);
+        intent.putExtra(DriveUploadService.EXTRA_FILE_NAME, fileName);
+        intent.putExtra(DriveUploadService.EXTRA_AUTH_HEADER, authHeader);
+        intent.putExtra(DriveUploadService.EXTRA_METADATA_EVENT_JSON, metadataEventJson);
+        intent.putExtra(DriveUploadService.EXTRA_RELAYS_JSON, relaysJson.toString());
+        intent.putExtra(DriveUploadService.EXTRA_BLOBS_JSON, blobsJson.toString());
+
+        ContextCompat.startForegroundService(getContext(), intent);
+    }
+
+    @PluginMethod
+    public void cancelNativeUpload(PluginCall call) {
+        String uploadId = call.getString("uploadId");
+        if (uploadId == null) {
+            call.reject("uploadId is required");
+            return;
+        }
+
+        DriveUploadService.cancel(uploadId);
+        call.resolve();
+    }
+
+    // Lightweight, JS-driven upload notification. The in-app (OPFS) upload path
+    // runs no foreground service, so the JS layer posts/updates/clears a plain
+    // progress notification directly. Reuses DriveUploadService's channels.
+
+    @PluginMethod
+    public void showUploadNotification(PluginCall call) {
+        String id = call.getString("id");
+        String fileName = call.getString("fileName", "file");
+        Integer percent = call.getInt("percent", 0);
+        if (id == null) {
+            call.reject("id is required");
+            return;
+        }
+
+        NotificationManager nm = (NotificationManager) getContext().getSystemService(Context.NOTIFICATION_SERVICE);
+        DriveUploadService.ensureNotificationChannel(nm);
+
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(getContext(), DriveUploadService.UPLOAD_CHANNEL_ID)
+                .setContentTitle("Uploading " + fileName)
+                .setSmallIcon(R.drawable.ic_notification)                .setProgress(100, percent != null ? percent : 0, false)
+                .setOngoing(true)
+                .setSilent(true);
+        nm.notify(uploadProgressNotifId(id), builder.build());
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void finishUploadNotification(PluginCall call) {
+        String id = call.getString("id");
+        String fileName = call.getString("fileName", "file");
+        Boolean ok = call.getBoolean("ok", Boolean.TRUE);
+        String message = call.getString("message");
+        if (id == null) {
+            call.reject("id is required");
+            return;
+        }
+
+        NotificationManager nm = (NotificationManager) getContext().getSystemService(Context.NOTIFICATION_SERVICE);
+        DriveUploadService.ensureNotificationChannel(nm);
+        nm.cancel(uploadProgressNotifId(id));
+
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(getContext(), DriveUploadService.UPLOAD_DONE_CHANNEL_ID);
+        if (ok == null || ok) {
+            builder.setContentTitle("Upload complete").setContentText(fileName);
+        } else {
+            builder.setContentTitle("Upload failed")
+                    .setContentText(message != null ? fileName + ": " + message : fileName);
+        }
+        builder.setSmallIcon(R.drawable.ic_notification)                .setAutoCancel(true)
+                .setOngoing(false);
+        nm.notify(uploadResultNotifId(id), builder.build());
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void clearUploadNotification(PluginCall call) {
+        String id = call.getString("id");
+        if (id == null) {
+            call.reject("id is required");
+            return;
+        }
+        NotificationManager nm = (NotificationManager) getContext().getSystemService(Context.NOTIFICATION_SERVICE);
+        nm.cancel(uploadProgressNotifId(id));
+        call.resolve();
+    }
+
+    private static int uploadProgressNotifId(String id) {
+        return id.hashCode() & 0x7fffffff;
+    }
+
+    private static int uploadResultNotifId(String id) {
+        return (id + ":result").hashCode() & 0x7fffffff;
     }
 }

@@ -1,11 +1,9 @@
 package com.formstr.drive.files;
 
-import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.Context;
 import android.database.Cursor;
 import android.database.MatrixCursor;
-import android.os.Build;
 import android.os.CancellationSignal;
 import android.os.Handler;
 import android.os.Looper;
@@ -25,13 +23,8 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import android.graphics.Point;
 import android.content.res.AssetFileDescriptor;
-import android.provider.DocumentsContract;
-import android.provider.DocumentsProvider;
-import android.util.Log;
 
 import java.util.List;
 import java.util.UUID;
@@ -41,12 +34,7 @@ public class DriveFilesDocumentsProvider extends DocumentsProvider {
     private static final String ROOT_SUMMARY_EMPTY = "Open the app to sign in and sync files";
     private static final String ROOT_SUMMARY_READY = "Browse the latest synced Drive snapshot";
 
-    private static final String DOWNLOAD_CHANNEL_ID = "formstr_drive_downloads";
     private static final AtomicInteger notifIdCounter = new AtomicInteger(0);
-
-    private interface ProgressCallback {
-        void onProgress(int percent);
-    }
 
     private static final String[] DEFAULT_ROOT_PROJECTION = new String[] {
             DocumentsContract.Root.COLUMN_ROOT_ID,
@@ -433,13 +421,13 @@ public class DriveFilesDocumentsProvider extends DocumentsProvider {
         }
 
         NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-        ensureNotificationChannel(nm);
+        DriveFileDownloader.ensureNotificationChannel(nm);
 
         int notifId = notifIdCounter.incrementAndGet();
-        ProgressCallback onProgress = null;
+        final DriveFileDownloader.ProgressCallback finalOnProgress;
 
         if (nm.areNotificationsEnabled()) {
-            NotificationCompat.Builder notif = new NotificationCompat.Builder(context, DOWNLOAD_CHANNEL_ID)
+            NotificationCompat.Builder notif = new NotificationCompat.Builder(context, DriveFileDownloader.DOWNLOAD_CHANNEL_ID)
                     .setContentTitle("Formstr Drive")
                     .setContentText("Downloading " + file.name)
                     .setSmallIcon(android.R.drawable.stat_sys_download)
@@ -448,26 +436,26 @@ public class DriveFilesDocumentsProvider extends DocumentsProvider {
                     .setSilent(true);
             nm.notify(notifId, notif.build());
 
-            onProgress = (percent) -> {
+            finalOnProgress = (percent) -> {
                 notif.setProgress(100, percent, false);
                 nm.notify(notifId, notif.build());
             };
+        } else {
+            finalOnProgress = null;
         }
 
         try {
-            byte[] encryptedBlob = downloadEncryptedBlob(file.server, file.hash, signal, onProgress);
-            byte[] decryptedBytes;
-
-            try {
-                decryptedBytes = DriveFilesCrypto.decryptEncryptedBlob(encryptedBlob, file.encryptionKey);
-            } catch (Exception error) {
-                throw new IOException("Failed to decrypt Drive file", error);
-            }
-
             File tempFile = new File(exportDirectory, file.hash + ".tmp");
             try (FileOutputStream outputStream = new FileOutputStream(tempFile, false)) {
-                outputStream.write(decryptedBytes);
-                outputStream.flush();
+                DriveFileDownloader.downloadAndDecryptToStream(
+                        file.server,
+                        file.chunks,
+                        file.hash,
+                        file.encryptionKey,
+                        outputStream,
+                        finalOnProgress,
+                        signal
+                );
             }
 
             if (exportFile.exists() && !exportFile.delete()) {
@@ -499,7 +487,7 @@ public class DriveFilesDocumentsProvider extends DocumentsProvider {
             return thumbnailFile;
         }
 
-        byte[] encryptedBlob = downloadEncryptedBlob(file.server, file.previewHash, signal, null);
+        byte[] encryptedBlob = DriveFileDownloader.downloadEncryptedBlob(file.server, file.previewHash, signal, null);
         byte[] decryptedBytes;
 
         try {
@@ -523,67 +511,6 @@ public class DriveFilesDocumentsProvider extends DocumentsProvider {
         }
 
         return thumbnailFile;
-    }
-
-    private void ensureNotificationChannel(NotificationManager nm) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
-        if (nm.getNotificationChannel(DOWNLOAD_CHANNEL_ID) != null) return;
-        NotificationChannel channel = new NotificationChannel(
-                DOWNLOAD_CHANNEL_ID, "Form* Drive Downloads", NotificationManager.IMPORTANCE_LOW
-        );
-        channel.setDescription("File download progress");
-        channel.setSound(null, null);
-        nm.createNotificationChannel(channel);
-    }
-
-    private byte[] downloadEncryptedBlob(
-            String server, String hash, @Nullable CancellationSignal signal, @Nullable ProgressCallback onProgress)
-            throws IOException {
-        String normalizedServer = server.endsWith("/") ? server.substring(0, server.length() - 1) : server;
-        URL url = new URL(normalizedServer + "/" + hash);
-        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-        connection.setRequestMethod("GET");
-        connection.setConnectTimeout(15000);
-        connection.setReadTimeout(30000);
-        connection.setDoInput(true);
-
-        try {
-            connection.connect();
-
-            if (signal != null && signal.isCanceled()) {
-                throw new IOException("File open was cancelled");
-            }
-
-            int responseCode = connection.getResponseCode();
-            if (responseCode < 200 || responseCode >= 300) {
-                throw new IOException(
-                        "Server rejected public file read with HTTP " + responseCode
-                );
-            }
-
-            int contentLength = connection.getContentLength();
-            byte[] buffer = new byte[65536];
-            long totalRead = 0;
-
-            try (java.io.InputStream inputStream = connection.getInputStream();
-                 java.io.ByteArrayOutputStream outputStream = new java.io.ByteArrayOutputStream()) {
-                int bytesRead;
-                while ((bytesRead = inputStream.read(buffer)) != -1) {
-                    if (signal != null && signal.isCanceled()) {
-                        throw new IOException("File open was cancelled");
-                    }
-                    outputStream.write(buffer, 0, bytesRead);
-                    totalRead += bytesRead;
-                    if (onProgress != null && contentLength > 0) {
-                        onProgress.onProgress((int) (totalRead * 100 / contentLength));
-                    }
-                }
-
-                return outputStream.toByteArray();
-            }
-        } finally {
-            connection.disconnect();
-        }
     }
 
     private Context ensureContext() throws FileNotFoundException {

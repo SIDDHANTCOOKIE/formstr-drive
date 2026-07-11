@@ -1,4 +1,4 @@
-import { SimplePool, nip44, type Filter } from "nostr-tools";
+import { SimplePool, nip44, type Filter, type Event } from "nostr-tools";
 import type { FileMetadata, NostrEvent } from "../types/metadata";
 import { signerManager } from "../signer/manager";
 import { APP_RELAYS } from "../utils/common";
@@ -68,17 +68,22 @@ export async function fetchFileIndex(
   console.log("[FileIndex] Starting fetch from relays:", RELAYS);
   console.log("[FileIndex] User pubkey:", pubkey);
 
-  // Proactively fetch the full Drive Key keyring before the relay timer starts.
+  // Fetch the full Drive Key keyring IN PARALLEL with the file subscription
+  // below — file events can stream in from relays while the keyring resolves,
+  // and the keys are only actually needed at the processing step (10s later).
+  // This keeps a slow key fetch from blocking file loading on first login.
   // Every key the user has ever published may unlock files encrypted under it,
   // so we keep them ALL and try each when decrypting. If this fails (e.g. signer
   // unavailable), we fall back to legacy decryption for every event.
-  let driveConversationKeys: Uint8Array[] = [];
-  try {
-    driveConversationKeys = await getDriveConversationKeys();
-    console.log(`[FileIndex] Drive Key keyring ready (${driveConversationKeys.length} key(s))`);
-  } catch (e) {
-    console.warn("[FileIndex] Could not obtain Drive Key keyring, using legacy decryption", e);
-  }
+  const driveKeysPromise: Promise<Uint8Array[]> = getDriveConversationKeys().catch(
+    (e) => {
+      console.warn(
+        "[FileIndex] Could not obtain Drive Key keyring, using legacy decryption",
+        e,
+      );
+      return [];
+    },
+  );
 
   const pool = new SimplePool();
 
@@ -116,6 +121,10 @@ export async function fetchFileIndex(
       console.log(`[FileIndex] Timeout reached, processing ${events.length} events`);
       sub.close();
       pool.close(RELAYS);
+
+      // Keys were resolving in parallel with the subscription; grab them now.
+      const driveConversationKeys = await driveKeysPromise;
+      console.log(`[FileIndex] Drive Key keyring ready (${driveConversationKeys.length} key(s))`);
 
       const files: FileMetadata[] = [];
       const legacyFilesToMigrate: FileMetadata[] = [];
@@ -208,44 +217,57 @@ export async function autoMigrateLegacyFiles(files: FileMetadata[]) {
   }
 }
 
-export async function saveFileMetadata(metadata: FileMetadata): Promise<void> {
-  console.log("[FileIndex] Saving metadata:", metadata);
+/**
+ * Builds and signs the kind-34578 metadata event, but does NOT publish it.
+ * Split out so callers (e.g. an Android foreground handoff) can sign the
+ * event while the signer is available and publish it later, possibly from
+ * a background context with no signer access.
+ */
+export async function buildSignedMetadataEvent(metadata: FileMetadata): Promise<Event> {
+  console.log("[FileIndex] Building signed metadata event:", metadata);
   const signer = await getSigner();
   const pubkey = await signer.getPublicKey();
+
+  const encrypted = await encryptMetadata(metadata);
+  console.log("[FileIndex] Encrypted metadata length:", encrypted.length);
+
+  const event: NostrEvent = {
+    kind: METADATA_KIND,
+    pubkey,
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [
+      ["d", metadata.hash],
+      ["t", "files"],
+      ["client", CLIENT_TAG],
+      ["encrypted", "nip44"],
+    ],
+    content: encrypted,
+  };
+
+  console.log("[FileIndex] Event to sign:", event);
+  const signedEvent = await signer.signEvent(event);
+  console.log("[FileIndex] Signed event:", signedEvent);
+  return signedEvent;
+}
+
+export async function publishMetadataEvent(signedEvent: Event): Promise<void> {
   const pool = new SimplePool();
-
   try {
-    const encrypted = await encryptMetadata(metadata);
-    console.log("[FileIndex] Encrypted metadata length:", encrypted.length);
-
-    const event: NostrEvent = {
-      kind: METADATA_KIND,
-      pubkey,
-      created_at: Math.floor(Date.now() / 1000),
-      tags: [
-        ["d", metadata.hash],
-        ["t", "files"],
-        ["client", CLIENT_TAG],
-        ["encrypted", "nip44"],
-      ],
-      content: encrypted,
-    };
-
-    console.log("[FileIndex] Event to publish:", event);
-    const signedEvent = await signer.signEvent(event);
-    console.log("[FileIndex] Signed event:", signedEvent);
-
     const publishPromises = pool.publish(RELAYS, signedEvent);
     console.log("[FileIndex] Publishing to relays:", RELAYS);
-
     await Promise.any(publishPromises);
     console.log("[FileIndex] Successfully published to at least one relay");
   } catch (e) {
-    console.error("[FileIndex] Failed to save metadata:", e);
+    console.error("[FileIndex] Failed to publish metadata:", e);
     throw e;
   } finally {
     pool.close(RELAYS);
   }
+}
+
+export async function saveFileMetadata(metadata: FileMetadata): Promise<void> {
+  const signedEvent = await buildSignedMetadataEvent(metadata);
+  await publishMetadataEvent(signedEvent);
 }
 
 export async function deleteFileMetadata(_hash: string, currentMetadata: FileMetadata): Promise<void> {

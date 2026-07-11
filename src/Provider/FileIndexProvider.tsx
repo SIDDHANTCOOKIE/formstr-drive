@@ -15,11 +15,7 @@ import {
   autoMigrateLegacyFiles,
 } from "../services/fileIndex";
 import { MigrationPromptModal } from "../components/MigrationPromptModal";
-import { encryptFileWithKey, encryptFileWithExistingKey } from "../crypto";
-import { createAuthEvent } from "../auth";
-import { BlossomClient } from "../blossom";
 import { useProfileContext } from "../hooks/useProfileContext";
-import { previewFile } from "../services/Preview/previewManager";
 import { getStoredItem, setStoredItem, STORAGE_KEYS } from "../utils/persistence";
 import {
   clearNativeDriveManifest,
@@ -29,16 +25,11 @@ import {
   syncNativeDriveManifest,
 } from "../native/driveManifest";
 import { useBlossomServer } from "../hooks/useBlossomServer";
+import { isAndroidPlatform } from "../utils/platform";
+import { useUploader, type UploadProgress } from "../hooks/useUploader";
+import { useDownloader, type DownloadProgress } from "../hooks/useDownloader";
 
-export interface UploadProgress {
-  fileName: string;
-  stage: string;
-}
-
-export interface UploadProgress {
-  fileName: string;
-  stage: string;
-}
+export type { UploadProgress, DownloadProgress };
 
 export interface FileIndexContextType {
   files: FileMetadata[];
@@ -48,9 +39,14 @@ export interface FileIndexContextType {
   currentFolder: string;
   setCurrentFolder: (folder: string) => void;
   loading: boolean;
+  hasHydratedIndex: boolean;
   error: string | null;
   uploadProgress: UploadProgress | null;
   uploadFile: (file: File, server: string) => Promise<void>;
+  cancelUpload: () => void;
+  downloadProgress: DownloadProgress | null;
+  downloadFile: (file: FileMetadata) => Promise<{ uri: string | null }>;
+  cancelDownload: () => void;
   deleteFile: (hash: string) => Promise<void>;
   deleteFiles: (hashes: string[]) => Promise<void>;
   moveFile: (hash: string, newFolder: string) => Promise<void>;
@@ -69,15 +65,35 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
   const [currentFolder, setCurrentFolder] = useState("/");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [customFolders, setCustomFolders] = useState<string[]>([]);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [hasHydratedIndex, setHasHydratedIndex] = useState(false);
   const [legacyFiles, setLegacyFiles] = useState<FileMetadata[]>([]);
   const processingPendingImportsRef = useRef(false);
 
+  const { uploadProgress, uploadPreparedFile, cancelUpload } = useUploader({ setFiles, setError });
+  const { downloadProgress, downloadFile, cancelDownload } = useDownloader();
+
   const foldersFromFiles = extractFolders(files);
   const folders = Array.from(new Set([...foldersFromFiles, ...customFolders])).sort();
+
+  useEffect(() => {
+    // Android downloads run in a foreground service and uploads stay alive via
+    // the upload service's notification, so there's nothing to warn about here.
+    if (isAndroidPlatform || (!uploadProgress && !downloadProgress)) {
+      return;
+    }
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, [uploadProgress, downloadProgress]);
 
   useEffect(() => {
     const loadCustomFolders = async () => {
@@ -169,75 +185,6 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
     settingsLoaded,
     hasHydratedIndex,
   ]);
-
-  const uploadPreparedFile = useCallback(
-    async (file: File, server: string, targetFolder: string) => {
-      setError(null);
-
-      try {
-        setUploadProgress({ fileName: file.name, stage: "Reading file..." });
-        
-        // Start generating preview immediately in the background
-        const previewPromise = previewFile(file).catch((e) => {
-          console.warn("Background preview generation failed", e);
-          return null;
-        });
-
-        const bytes = new Uint8Array(await file.arrayBuffer());
-
-        setUploadProgress({ fileName: file.name, stage: "Encrypting..." });
-        const { ciphertext, privateKeyHex } = await encryptFileWithKey(bytes);
-
-        setUploadProgress({ fileName: file.name, stage: "Uploading..." });
-        const client = new BlossomClient(server);
-        const encryptedBytes = new TextEncoder().encode(ciphertext);
-        const auth = await createAuthEvent("upload", `Upload ${file.name}`, encryptedBytes);
-        const hash = await client.upload(encryptedBytes, auth);
-
-        let previewHash: string | undefined;
-        
-        // Wait for preview if it's not done yet
-        const preview = await previewPromise;
-        
-        if (preview) {
-          setUploadProgress({ fileName: file.name, stage: "Uploading preview..." });
-          const encrypted = await encryptFileWithExistingKey(preview, privateKeyHex);
-          const encryptedPreviewBytes = new TextEncoder().encode(encrypted);
-          const previewAuth = await createAuthEvent(
-            "upload",
-            "Upload file preview",
-            encryptedPreviewBytes,
-          );
-          previewHash = await client.upload(encryptedPreviewBytes, previewAuth);
-        }
-
-        setUploadProgress({ fileName: file.name, stage: "Saving metadata..." });
-        const metadata: FileMetadata = {
-          name: file.name,
-          hash,
-          size: file.size,
-          type: file.type || "application/octet-stream",
-          folder: targetFolder,
-          uploadedAt: Date.now(),
-          server,
-          ...(previewHash ? { previewHash } : {}),
-          encryptionKey: privateKeyHex,
-          encryptionAlgorithm: "aes-gcm",
-        };
-
-        await saveFileMetadata(metadata);
-        setFiles((prev) => [metadata, ...prev]);
-        return metadata;
-      } catch (e) {
-        const errorMsg = e instanceof Error ? e.message : "Upload failed";
-        setError(errorMsg);
-        throw e;
-      } finally {
-        setUploadProgress(null);
-      }
-    },
-    [],
-  );
 
   const uploadFile = useCallback(
     async (file: File, server: string) => {
@@ -434,9 +381,14 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
         currentFolder,
         setCurrentFolder,
         loading,
+        hasHydratedIndex,
         error,
         uploadProgress,
         uploadFile,
+        cancelUpload,
+        downloadProgress,
+        downloadFile,
+        cancelDownload,
         deleteFile,
         deleteFiles,
         moveFile,
@@ -445,10 +397,10 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
         refresh,
       }}
     >
-      <MigrationPromptModal 
-        files={legacyFiles} 
-        onAccept={handleAcceptMigration} 
-        onDismiss={handleDismissMigration} 
+      <MigrationPromptModal
+        files={legacyFiles}
+        onAccept={handleAcceptMigration}
+        onDismiss={handleDismissMigration}
       />
       {children}
     </FileIndexContext.Provider>

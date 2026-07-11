@@ -39,7 +39,7 @@ export function createDeferredLocalSigner(
 
   const getSigner = async () => {
     if (!signerPromise) {
-      signerPromise = (async () => {
+      const attempt = (async () => {
         const signer = createLocalSigner(await loadPrivkeyHex());
         const actualPubkey = await signer.getPublicKey();
 
@@ -49,6 +49,17 @@ export function createDeferredLocalSigner(
 
         return signer;
       })();
+
+      // Only keep a SUCCESSFUL load memoized. If it rejects (e.g. a slow/failed
+      // secure-storage read on cold start), clear it so the next call retries
+      // instead of replaying the same cached rejection forever.
+      attempt.catch(() => {
+        if (signerPromise === attempt) {
+          signerPromise = null;
+        }
+      });
+
+      signerPromise = attempt;
     }
 
     return signerPromise;

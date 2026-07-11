@@ -45,6 +45,18 @@
                 <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
             </intent-filter>
         </provider>
+
+        <service
+            android:name=".files.DriveDownloadService"
+            android:foregroundServiceType="dataSync"
+            android:stopWithTask="false"
+            android:exported="false" />
+
+        <service
+            android:name=".files.DriveUploadService"
+            android:foregroundServiceType="dataSync"
+            android:stopWithTask="false"
+            android:exported="false" />
     </application>
 
     <!-- Permissions -->
@@ -52,4 +64,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 </manifest>
