@@ -7,13 +7,16 @@ import { Header } from "./components/Header";
 import { FolderSidebar } from "./components/FolderSidebar";
 import { FileList } from "./components/FileList";
 import { SignIn } from "./components/SignIn/SignIn";
+import { UnlockScreen } from "./components/SignIn/UnlockScreen";
+import { NsecMigrationPrompt } from "./components/SignIn/NsecMigrationPrompt";
 import { UploadManager } from "./components/UploadManager";
 import { DownloadManager } from "./components/DownloadManager";
 import { ToastProvider } from "./context/ToastProvider";
 import "./App.css";
 
 function DriveLayout() {
-  const { isSignedIn, restoring } = useProfileContext();
+  const { isSignedIn, restoring, locked, pendingNsecMigration } =
+    useProfileContext();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   if (restoring) {
@@ -22,6 +25,14 @@ function DriveLayout() {
         <div className="loading-state">Restoring session...</div>
       </div>
     );
+  }
+
+  if (pendingNsecMigration) {
+    return <NsecMigrationPrompt />;
+  }
+
+  if (locked) {
+    return <UnlockScreen />;
   }
 
   if (!isSignedIn) {
