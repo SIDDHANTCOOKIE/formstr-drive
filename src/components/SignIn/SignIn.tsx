@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import { useProfileContext } from "../../hooks/useProfileContext";
 import { isNativePlatform } from "../../utils/platform";
+import { BunkerLinkIcon } from "../icons/Icons";
 
-const NIP46_RELAYS = ["wss://relay.nsec.app", "wss://nostr.oxtr.dev"];
+import { NIP46_RELAYS } from "../../utils/constants";
 
 type RemoteTab = "uri" | "qr";
 type SignInMethod = "external" | "bunker" | "import" | "create";
@@ -28,7 +29,15 @@ function getUserFriendlyNsecError(error: unknown): string {
   return "Failed to sign in with nsec";
 }
 
-export function SignIn() {
+interface SignInProps {
+  /** Rendered inside AddAccountModal rather than as the full-page sign-in
+   * screen — swaps the copy, everything else (every login method) is
+   * identical, since adding an account IS signing in, just to a second
+   * identity instead of the first. */
+  embedded?: boolean;
+}
+
+export function SignIn({ embedded = false }: SignInProps) {
   const {
     requestPubkey,
     loginWithBunkerUri,
@@ -63,10 +72,16 @@ export function SignIn() {
   const [loadingCreateKey, setLoadingCreateKey] = useState(false);
   const [loadingExtension, setLoadingExtension] = useState(false);
   const qrAbortRef = useRef<AbortController | null>(null);
-  const title = nativeShellMode ? "Sign in to Drive by Form*" : "Drive by Form*";
-  const subtitle = nativeShellMode
-    ? "Choose your preferred login method"
-    : "Encrypted file storage on Nostr";
+  const title = embedded
+    ? "Add another account"
+    : nativeShellMode
+      ? "Sign in to Drive by Form*"
+      : "Drive by Form*";
+  const subtitle = embedded
+    ? "Choose a sign-in method"
+    : nativeShellMode
+      ? "Choose your preferred login method"
+      : "Encrypted file storage on Nostr";
 
   const busy =
     loadingPackage !== null ||
@@ -299,7 +314,7 @@ export function SignIn() {
   };
 
   return (
-    <div className="sign-in-container">
+    <div className={`sign-in-container${embedded ? " sign-in-container--embedded" : ""}`}>
       <div className="sign-in-card">
         <h1>{title}</h1>
         <p className="sign-in-subtitle">{subtitle}</p>
@@ -410,15 +425,7 @@ export function SignIn() {
                   <div className="sign-in-method-section">
                     <div className="sign-in-remote-header">
                       <div className="sign-in-remote-icon" aria-hidden="true">
-                        <svg viewBox="0 0 24 24" fill="none">
-                          <path
-                            d="M10.25 13.75 13.75 10.25M8 15.5H6.5a3 3 0 1 1 0-6H8m8 6h1.5a3 3 0 1 0 0-6H16"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
+                        <BunkerLinkIcon />
                       </div>
                       <div className="sign-in-remote-copy">
                         <h2>Connect with remote signer</h2>

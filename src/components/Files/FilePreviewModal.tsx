@@ -1,18 +1,18 @@
 import { useEffect, useState } from "react";
-import type { FileMetadata } from "../types/metadata";
-import { resolvePreviewMode, MAX_PREVIEW_SIZE } from "../utils/fileTypeHelpers";
-import { canOpenInNostrDocs, openInNostrDocs } from "../utils/docsIntegrationHelpers";
-import { downloadAndDecryptFile } from "../services/downloadFile";
-import { useToast } from "../hooks/useToast";
+import type { FileMetadata } from '../../types/metadata';
+import { resolvePreviewMode, MAX_PREVIEW_SIZE } from '../../utils/fileTypeHelpers';
+import { canOpenInNostrDocs, openInNostrDocs } from '../../utils/docsIntegrationHelpers';
+import { downloadAndDecryptFile } from '../../services/downloadFile';
+import { useToast } from '../../hooks/useToast';
 
 interface FilePreviewModalProps {
   file: FileMetadata;
   onClose: () => void;
 }
-import { ImagePreview } from "./preview/ImagePreview";
-import { VideoPreview } from "./preview/VideoPreview";
-import { PdfPreview } from "./preview/PdfPreview";
-import { TextPreview } from "./preview/TextPreview";
+import { ImagePreview } from '../preview/ImagePreview';
+import { VideoPreview } from '../preview/VideoPreview';
+import { PdfPreview } from '../preview/PdfPreview';
+import { TextPreview } from '../preview/TextPreview';
 
 export function FilePreviewModal({ file, onClose }: FilePreviewModalProps) {
   const toast = useToast();
@@ -86,7 +86,7 @@ export function FilePreviewModal({ file, onClose }: FilePreviewModalProps) {
 
   return (
     <div className="preview-modal-overlay" onClick={onClose}>
-      <div className="preview-modal" onClick={(e) => e.stopPropagation()}>
+      <div className="preview-modal" data-surface="inverse" onClick={(e) => e.stopPropagation()}>
         <div className="preview-modal-header">
           <div className="preview-modal-title-wrap">
             <h3 className="preview-modal-title" title={file.name}>{file.name}</h3>

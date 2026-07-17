@@ -49,7 +49,8 @@ export const NostrAvatar : FC<NostrAvatarProps> = memo(({ pubkey }) => {
     
     return (
         <Avatar 
-            src={profile?.picture || <UserOutlined style={{ color : "black" }} />}
+            src={profile?.picture || <UserOutlined style={{ color: "var(--color-text-secondary)" }} />}
+            style={{ background: "var(--color-accent-subtle)", color: "var(--color-accent)" }}
             alt={profile?.name}
         />
     )

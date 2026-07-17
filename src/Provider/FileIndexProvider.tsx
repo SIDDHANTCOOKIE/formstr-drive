@@ -16,7 +16,7 @@ import {
   extractFolders,
   autoMigrateLegacyFiles,
 } from "../services/fileIndex";
-import { MigrationPromptModal } from "../components/MigrationPromptModal";
+import { MigrationPromptModal } from '../components/Dialogs/MigrationPromptModal';
 import { useProfileContext } from "../hooks/useProfileContext";
 import { getStoredItem, setStoredItem, STORAGE_KEYS } from "../utils/persistence";
 import {

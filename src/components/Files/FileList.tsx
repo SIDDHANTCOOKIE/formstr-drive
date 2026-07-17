@@ -1,26 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { useFileIndex } from "../hooks/useFileContext";
-import { useToast } from "../hooks/useToast";
+import { useFileIndex } from '../../hooks/useFileContext';
+import { useToast } from '../../hooks/useToast';
 import { FileCard } from "./FileCard";
-import { UploadZone } from "./UploadZone";
+import { UploadZone } from '../Upload/UploadZone';
+import { SearchIcon, GridViewIcon, ListViewIcon, FolderIcon } from '../icons/Icons';
 
-function getFolderName(path: string): string {
-  if (path === "/") return "My Drive";
-  const parts = path.split("/").filter(Boolean);
-  return parts[parts.length - 1] || path;
-}
-
-function isDirectChildFolder(parentFolder: string, candidateFolder: string): boolean {
-  if (candidateFolder === "/" || candidateFolder === parentFolder) return false;
-
-  if (parentFolder === "/") {
-    return candidateFolder.split("/").filter(Boolean).length === 1;
-  }
-
-  if (!candidateFolder.startsWith(`${parentFolder}/`)) return false;
-  const relative = candidateFolder.slice(parentFolder.length + 1);
-  return relative.length > 0 && !relative.includes("/");
-}
+import { isDirectChildFolder, getFolderName } from '../../utils/folder';
+import { type SortKey, SORT_LABEL } from '../../utils/constants';
 
 export function FileList() {
   const {
@@ -35,6 +21,7 @@ export function FileList() {
   } = useFileIndex();
   const toast = useToast();
   const [searchQuery, setSearchQuery] = useState("");
+  const [sortKey, setSortKey] = useState<SortKey>("newest");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [selectedFileHashes, setSelectedFileHashes] = useState<Set<string>>(new Set());
   const [bulkAction, setBulkAction] = useState<"move" | "delete" | null>(null);
@@ -51,13 +38,27 @@ export function FileList() {
     [folders, currentFolder, normalizedQuery]
   );
 
-  const currentFiles = useMemo(
-    () =>
-      files
-        .filter((f) => f.folder === currentFolder)
-        .filter((f) => f.name.toLowerCase().includes(normalizedQuery)),
-    [files, currentFolder, normalizedQuery]
-  );
+  const currentFiles = useMemo(() => {
+    const matches = files
+      .filter((f) => f.folder === currentFolder)
+      .filter((f) => f.name.toLowerCase().includes(normalizedQuery));
+
+    return [...matches].sort((a, b) => {
+      switch (sortKey) {
+        case "name":
+          return a.name.localeCompare(b.name);
+        case "oldest":
+          return a.uploadedAt - b.uploadedAt;
+        case "largest":
+          return b.size - a.size;
+        case "smallest":
+          return a.size - b.size;
+        case "newest":
+        default:
+          return b.uploadedAt - a.uploadedAt;
+      }
+    });
+  }, [files, currentFolder, normalizedQuery, sortKey]);
   const currentFileHashes = useMemo(
     () => new Set(currentFiles.map((file) => file.hash)),
     [currentFiles]
@@ -260,10 +261,7 @@ export function FileList() {
 
         <div className="file-list-toolbar">
           <div className="search-wrap">
-            <svg className="search-icon" width="14" height="14" viewBox="0 0 16 16" fill="none">
-              <circle cx="6.5" cy="6.5" r="5" stroke="currentColor" strokeWidth="1.5" />
-              <path d="M10.5 10.5L14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
+            <SearchIcon className="search-icon" />
             <input
               type="text"
               className="search-input"
@@ -274,6 +272,19 @@ export function FileList() {
           </div>
 
           <div className="file-list-toolbar-actions">
+            <select
+              className="sort-select"
+              value={sortKey}
+              onChange={(e) => setSortKey(e.target.value as SortKey)}
+              aria-label="Sort by"
+            >
+              {(Object.keys(SORT_LABEL) as SortKey[]).map((key) => (
+                <option key={key} value={key}>
+                  {SORT_LABEL[key]}
+                </option>
+              ))}
+            </select>
+
             <button
               className="bulk-secondary-btn bulk-select-toggle"
               onClick={handleToggleSelectAll}
@@ -288,23 +299,14 @@ export function FileList() {
                 onClick={() => setViewMode("grid")}
                 title="Grid view"
               >
-                <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor">
-                  <rect x="1" y="1" width="6" height="6" rx="1" />
-                  <rect x="9" y="1" width="6" height="6" rx="1" />
-                  <rect x="1" y="9" width="6" height="6" rx="1" />
-                  <rect x="9" y="9" width="6" height="6" rx="1" />
-                </svg>
+                <GridViewIcon />
               </button>
               <button
                 className={`view-btn ${viewMode === "list" ? "active" : ""}`}
                 onClick={() => setViewMode("list")}
                 title="List view"
               >
-                <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor">
-                  <rect x="1" y="2" width="14" height="2" rx="1" />
-                  <rect x="1" y="7" width="14" height="2" rx="1" />
-                  <rect x="1" y="12" width="14" height="2" rx="1" />
-                </svg>
+                <ListViewIcon />
               </button>
             </div>
           </div>
@@ -327,12 +329,7 @@ export function FileList() {
                   title={`Open ${getFolderName(folderPath)}`}
                 >
                   <div className="folder-tile-preview">
-                    <svg className="folder-tile-icon" viewBox="0 0 24 16" fill="none" aria-hidden="true">
-                      <path
-                        d="M2 2.5C2 1.67 2.67 1 3.5 1H8.7C9.14 1 9.56 1.2 9.84 1.54L11.18 3.2C11.47 3.56 11.9 3.76 12.36 3.76H20.5C21.33 3.76 22 4.43 22 5.26V13.5C22 14.33 21.33 15 20.5 15H3.5C2.67 15 2 14.33 2 13.5V2.5Z"
-                        fill="currentColor"
-                      />
-                    </svg>
+                    <FolderIcon className="folder-tile-icon" />
                   </div>
                   <div className="folder-tile-footer">
                     <span className="folder-tile-name" title={getFolderName(folderPath)}>
@@ -350,12 +347,7 @@ export function FileList() {
                   title={`Open ${getFolderName(folderPath)}`}
                 >
                   <div className="folder-row-icon" aria-hidden="true">
-                    <svg viewBox="0 0 24 16" fill="none">
-                      <path
-                        d="M2 2.5C2 1.67 2.67 1 3.5 1H8.7C9.14 1 9.56 1.2 9.84 1.54L11.18 3.2C11.47 3.56 11.9 3.76 12.36 3.76H20.5C21.33 3.76 22 4.43 22 5.26V13.5C22 14.33 21.33 15 20.5 15H3.5C2.67 15 2 14.33 2 13.5V2.5Z"
-                        fill="currentColor"
-                      />
-                    </svg>
+                    <FolderIcon />
                   </div>
                   <div className="folder-row-info">
                     <span className="folder-row-name" title={getFolderName(folderPath)}>

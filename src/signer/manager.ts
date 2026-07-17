@@ -68,6 +68,31 @@ class SignerManager {
     return this.signer?.getActiveAccount() ?? null;
   }
 
+  listAccounts(): StoredAccount[] {
+    return this.signer?.listAccounts() ?? [];
+  }
+
+  /**
+   * Switches which persisted account is active. Per the package contract
+   * this always leaves the new account LOCKED, even if it was unlocked
+   * earlier this session — callers should expect `isLocked()` to flip true
+   * right after this resolves and drive the existing unlock UI from there.
+   */
+  async switchAccount(pubkey: string): Promise<void> {
+    const signer = this.requireSigner();
+    await signer.switchAccount(pubkey);
+  }
+
+  /**
+   * Removes one persisted account. Unlike `logout()` (which always targets
+   * the active account), this can remove any account by pubkey — used for
+   * pruning a stale entry from the account list without switching to it.
+   */
+  async removeAccount(pubkey: string): Promise<void> {
+    const signer = this.requireSigner();
+    await signer.logout(pubkey);
+  }
+
   isLocked(): boolean {
     return !!this.signer?.getActiveAccount() && !this.signer.getActiveSigner();
   }

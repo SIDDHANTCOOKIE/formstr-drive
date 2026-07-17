@@ -1,14 +1,17 @@
 import { useState, useEffect, useRef } from "react";
-import type { FileMetadata } from "../types/metadata";
-import { useFileIndex } from "../hooks/useFileContext";
-import { decryptFileWithKey } from "../crypto";
-import { BlossomClient } from "../blossom";
-import { openDownloadedFile } from "../native/driveManifest";
-import { isNativePlatform } from "../utils/platform";
+import type { FileMetadata } from '../../types/metadata';
+import { useFileIndex } from '../../hooks/useFileContext';
+import { decryptFileWithKey } from '../../crypto';
+import { BlossomClient } from '../../blossom';
+import { openDownloadedFile } from '../../native/driveManifest';
+import { isNativePlatform } from '../../utils/platform';
 import { FilePreviewModal } from "./FilePreviewModal";
-import { detectMimeTypeFromMagicBytes, getFileIcon, MAX_PREVIEW_SIZE } from "../utils/fileTypeHelpers";
-import { useToast } from "../hooks/useToast";
-import { isAbortError } from "../utils/abortError";
+import { detectMimeTypeFromMagicBytes, getFileIcon, MAX_PREVIEW_SIZE } from '../../utils/fileTypeHelpers';
+import { useToast } from '../../hooks/useToast';
+import { isAbortError } from '../../utils/abortError';
+import { FILE_HASH_MIME } from '../../utils/constants';
+import { formatSize, formatDate, getHostname } from '../../utils/format';
+import { PreviewEyeIcon } from '../icons/Icons';
 
 interface FileCardProps {
   file: FileMetadata;
@@ -19,15 +22,13 @@ interface FileCardProps {
 
 
 
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return bytes + " B";
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
-  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + " MB";
-  return (bytes / (1024 * 1024 * 1024)).toFixed(1) + " GB";
-}
 
-function formatDate(timestamp: number): string {
-  return new Date(timestamp).toLocaleDateString();
+function ServerBadge({ server }: { server: string }) {
+  return (
+    <span className="file-server-badge" title={server}>
+      {getHostname(server)}
+    </span>
+  );
 }
 
 interface PreviewData {
@@ -308,10 +309,15 @@ export function FileCard({
             onClick={() => setShowMenu(false)}
           />
         )}
-        <div 
+        <div
           className={`file-tile ${showMenu ? "menu-open" : ""} ${selected ? "selected" : ""}`}
           onMouseEnter={handleTileMouseEnter}
           onMouseLeave={handleTileMouseLeave}
+          draggable
+          onDragStart={(e) => {
+            e.dataTransfer.setData(FILE_HASH_MIME, file.hash);
+            e.dataTransfer.effectAllowed = "move";
+          }}
         >
           {/* Preview area */}
           <div className={`file-tile-preview ${showMenu ? "menu-open" : ""}`}>
@@ -332,6 +338,7 @@ export function FileCard({
             ) : null}
             <div
               className="file-tile-icon-fallback"
+              data-type={icon}
               style={{ display: hasPreview ? "none" : "flex" }}
             >
               <span className="file-tile-ext">{icon.toUpperCase()}</span>
@@ -344,9 +351,7 @@ export function FileCard({
                 onClick={handlePreviewClick}
                 title="Preview"
               >
-                <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor" style={{ pointerEvents: "none" }}>
-                  <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zm0 12.5c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
-                </svg>
+                <PreviewEyeIcon />
               </button>
               <button
                 className="tile-action-btn"
@@ -384,6 +389,7 @@ export function FileCard({
           <div className="file-tile-footer">
             <span className="file-tile-name" title={file.name}>{file.name}</span>
             <span className="file-tile-meta">{formatSize(file.size)} · {formatDate(file.uploadedAt)}</span>
+            <ServerBadge server={file.server} />
           </div>
         </div>
         {showPreview && <FilePreviewModal file={file} onClose={() => setShowPreview(false)} />}
@@ -397,10 +403,15 @@ export function FileCard({
   return (
     <>
       {showMenu && <div className="file-menu-backdrop" onClick={() => setShowMenu(false)} />}
-      <div 
+      <div
         className={`file-card ${selected ? "selected" : ""}`}
         onMouseEnter={handleTileMouseEnter}
         onMouseLeave={handleTileMouseLeave}
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.setData(FILE_HASH_MIME, file.hash);
+          e.dataTransfer.effectAllowed = "move";
+        }}
       >
         {selectionControl}
         {previewloaded && preview ? (
@@ -424,7 +435,10 @@ export function FileCard({
         )}
         <div className="file-info">
           <span className="file-name" title={file.name}>{file.name}</span>
-          <span className="file-meta">{formatSize(file.size)} · {formatDate(file.uploadedAt)}</span>
+          <span className="file-meta">
+            {formatSize(file.size)} · {formatDate(file.uploadedAt)}
+            <ServerBadge server={file.server} />
+          </span>
         </div>
         <div className="file-actions">
           <button className="action-btn" onClick={handleDownload} disabled={downloading} title="Download">
@@ -435,9 +449,7 @@ export function FileCard({
             onClick={handlePreviewClick}
             title="Preview"
           >
-            <svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor" style={{ pointerEvents: "none" }}>
-              <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zm0 12.5c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
-            </svg>
+            <PreviewEyeIcon />
           </button>
           <button className="action-btn menu-btn" onClick={() => setShowMenu(!showMenu)} title="More">
             ⋮

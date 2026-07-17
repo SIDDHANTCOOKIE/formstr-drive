@@ -1,4 +1,4 @@
-import type { FileMetadata } from "../types/metadata";
+import type { FileMetadata } from '../../types/metadata';
 
 interface MigrationPromptModalProps {
   files: FileMetadata[];
@@ -30,7 +30,7 @@ export function MigrationPromptModal({ files, onAccept, onDismiss }: MigrationPr
             <button className="preview-doc-btn" onClick={onAccept}>
               Accept and Migrate
             </button>
-            <button className="cancel-btn" onClick={onDismiss} style={{ marginLeft: "10px" }}>
+            <button className="cancel-btn" onClick={onDismiss}>
               Skip for now
             </button>
           </div>

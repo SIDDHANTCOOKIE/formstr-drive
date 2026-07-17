@@ -1,4 +1,4 @@
-import { useFileIndex } from "../hooks/useFileContext";
+import { useFileIndex } from '../../hooks/useFileContext';
 import { TransferManager } from "./TransferManager";
 
 export function UploadManager() {

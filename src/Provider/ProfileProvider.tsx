@@ -8,6 +8,7 @@ import {
 import { signerManager } from "../signer/manager";
 import type { NativeSignerApp } from "../signer/types";
 import { isNativePlatform } from "../utils/platform";
+import type { StoredAccount } from "@formstr/signer";
 
 interface ProfileProviderProps {
     children? : ReactNode;
@@ -28,6 +29,9 @@ export interface ProfileContextType {
     unlockWithPassphrase: (passphrase: string) => Promise<string | undefined>;
     importNsec: (nsec: string, passphrase: string) => Promise<string | undefined>;
     logout : () => Promise<void>;
+    accounts: StoredAccount[];
+    switchAccount: (pubkey: string) => Promise<void>;
+    removeAccount: (pubkey: string) => Promise<void>;
     isSignedIn : boolean;
     locked: boolean;
     restoring: boolean;
@@ -46,6 +50,7 @@ export const ProfileContext = createContext<ProfileContextType | undefined>(unde
 export const ProfileProvider : FC<ProfileProviderProps> = ({ children }) => {
     const [pubkey, setPubkey] = useState<string | undefined>(undefined);
     const [locked, setLocked] = useState(false);
+    const [accounts, setAccounts] = useState<StoredAccount[]>([]);
     const [pendingNsecMigration, setPendingNsecMigration] = useState(false);
     const [restoring, setRestoring] = useState(true);
     const [nativeSignerApps, setNativeSignerApps] = useState<NativeSignerApp[]>([]);
@@ -55,6 +60,7 @@ export const ProfileProvider : FC<ProfileProviderProps> = ({ children }) => {
     const syncFromManager = () => {
         setPubkey(signerManager.getPubkey());
         setLocked(signerManager.isLocked());
+        setAccounts(signerManager.listAccounts());
         setPendingNsecMigration(signerManager.hasPendingNsecMigration());
     };
 
@@ -162,6 +168,16 @@ export const ProfileProvider : FC<ProfileProviderProps> = ({ children }) => {
         syncFromManager();
     };
 
+    const switchAccount = async (targetPubkey: string) => {
+        await signerManager.switchAccount(targetPubkey);
+        syncFromManager();
+    };
+
+    const removeAccount = async (targetPubkey: string) => {
+        await signerManager.removeAccount(targetPubkey);
+        syncFromManager();
+    };
+
     return (
         <ProfileContext.Provider
             value={{
@@ -174,6 +190,9 @@ export const ProfileProvider : FC<ProfileProviderProps> = ({ children }) => {
                 unlockWithPassphrase,
                 importNsec,
                 logout,
+                accounts,
+                switchAccount,
+                removeAccount,
                 isSignedIn,
                 locked,
                 restoring,

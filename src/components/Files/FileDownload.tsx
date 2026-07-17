@@ -1,7 +1,7 @@
 import React, { useState } from "react";
-import { decryptFileWithKey } from "../crypto";
-import { BlossomClient, BlossomError } from "../blossom";
-import { useBlossomServer } from "../hooks/useBlossomServer";
+import { decryptFileWithKey } from '../../crypto';
+import { BlossomClient, BlossomError } from '../../blossom';
+import { useBlossomServer } from '../../hooks/useBlossomServer';
 
 function detectFileType(bytes: Uint8Array): { mime: string; ext: string } {
   // Check magic bytes

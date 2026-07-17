@@ -1,8 +1,8 @@
 import React, { useState } from "react";
-import { encryptFileWithKey } from "../crypto";
-import { createAuthEvent } from "../auth";
-import { BlossomClient, BlossomError } from "../blossom";
-import { useBlossomServer } from "../hooks/useBlossomServer";
+import { encryptFileWithKey } from '../../crypto';
+import { createAuthEvent } from '../../auth';
+import { BlossomClient, BlossomError } from '../../blossom';
+import { useBlossomServer } from '../../hooks/useBlossomServer';
 
 export const FileUpload: React.FC = () => {
   const { selectedServer } = useBlossomServer();

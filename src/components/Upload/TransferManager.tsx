@@ -1,4 +1,4 @@
-import { isAndroidPlatform } from "../utils/platform";
+import { isAndroidPlatform } from '../../utils/platform';
 import "./UploadManager.css";
 
 export interface TransferProgress {
