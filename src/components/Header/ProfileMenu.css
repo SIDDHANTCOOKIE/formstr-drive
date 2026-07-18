@@ -97,9 +97,28 @@
   flex: 1;
   min-width: 0;
   color: var(--color-text-secondary);
+  height: auto;
+  min-height: 36px;
+  padding: var(--space-2) var(--space-4);
 }
 
-.profile-menu-account-switch span:last-child {
+.profile-menu-account-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.profile-menu-account-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-menu-account-npub {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -202,6 +221,7 @@
 
 .profile-menu-select {
   appearance: auto;
+  padding: 0 var(--space-5);
 }
 
 .profile-menu-add-server {

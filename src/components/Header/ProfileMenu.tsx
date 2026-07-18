@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { NostrAvatar } from "./NostrAvatar";
 import { AddAccountModal } from "./AddAccountModal";
 import { useProfileContext } from "../../hooks/useProfileContext";
 import { useTheme } from "../../hooks/useTheme";
 import { useBlossomServer } from "../../hooks/useBlossomServer";
+import { useNostrProfile, getProfileDisplayName } from "../../hooks/useNostrProfile";
 import { PALETTES, type Palette } from "../../context/ThemeProvider";
 import { SunIcon, MoonIcon } from "../ui/ThemeIcons";
 import "./ProfileMenu.css";
@@ -36,6 +37,50 @@ function truncateNpub(npub: string): string {
   return npub.length > 20 ? `${npub.slice(0, 12)}…${npub.slice(-4)}` : npub;
 }
 
+interface AccountRowProps {
+  account: { pubkey: string; npub: string };
+  isActive: boolean;
+  onSwitch: (pubkey: string) => void;
+  onRemove: (pubkey: string) => void;
+}
+
+// Memoized so unrelated ProfileMenu state (typing in the add-server field,
+// theme/palette clicks) doesn't re-render every account row. Effective only
+// because the parent passes stable (useCallback) onSwitch/onRemove.
+const AccountRow = memo(function AccountRow({
+  account,
+  isActive,
+  onSwitch,
+  onRemove,
+}: AccountRowProps) {
+  const profile = useNostrProfile(account.pubkey);
+  const label = getProfileDisplayName(profile) || truncateNpub(account.npub);
+
+  return (
+    <div className={`profile-menu-account${isActive ? " is-active" : ""}`}>
+      <button
+        className="profile-menu-row-btn profile-menu-account-switch"
+        onClick={() => onSwitch(account.pubkey)}
+        title={account.npub}
+      >
+        {isActive && <span className="profile-menu-account-dot" />}
+        <div className="profile-menu-account-info">
+          <span className="profile-menu-account-name">{label}</span>
+          <span className="profile-menu-account-npub">{truncateNpub(account.npub)}</span>
+        </div>
+      </button>
+      <button
+        className="profile-menu-account-remove"
+        onClick={() => onRemove(account.pubkey)}
+        aria-label={`Remove ${label}`}
+        title="Remove account"
+      >
+        ×
+      </button>
+    </div>
+  );
+});
+
 export function ProfileMenu() {
   const { pubkey, logout, requestPubkey, accounts, switchAccount, removeAccount } =
     useProfileContext();
@@ -57,6 +102,23 @@ export function ProfileMenu() {
     document.addEventListener("pointerdown", onPointerDown);
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [open]);
+
+  const handleSwitchAccount = useCallback(
+    (accountPubkey: string) => {
+      if (accountPubkey !== pubkey) {
+        void switchAccount(accountPubkey);
+      }
+      setOpen(false);
+    },
+    [pubkey, switchAccount]
+  );
+
+  const handleRemoveAccount = useCallback(
+    (accountPubkey: string) => {
+      void removeAccount(accountPubkey);
+    },
+    [removeAccount]
+  );
 
   const handleAddCustomServer = () => {
     if (!customUrl.trim()) return;
@@ -91,32 +153,13 @@ export function ProfileMenu() {
               <p className="profile-menu-label">Accounts</p>
               <div className="profile-menu-accounts">
                 {accounts.map((account) => (
-                  <div
+                  <AccountRow
                     key={account.pubkey}
-                    className={`profile-menu-account${account.pubkey === pubkey ? " is-active" : ""}`}
-                  >
-                    <button
-                      className="profile-menu-row-btn profile-menu-account-switch"
-                      onClick={() => {
-                        if (account.pubkey !== pubkey) {
-                          void switchAccount(account.pubkey);
-                        }
-                        setOpen(false);
-                      }}
-                      title={account.npub}
-                    >
-                      {account.pubkey === pubkey && <span className="profile-menu-account-dot" />}
-                      <span>{truncateNpub(account.npub)}</span>
-                    </button>
-                    <button
-                      className="profile-menu-account-remove"
-                      onClick={() => void removeAccount(account.pubkey)}
-                      aria-label={`Remove ${truncateNpub(account.npub)}`}
-                      title="Remove account"
-                    >
-                      ×
-                    </button>
-                  </div>
+                    account={account}
+                    isActive={account.pubkey === pubkey}
+                    onSwitch={handleSwitchAccount}
+                    onRemove={handleRemoveAccount}
+                  />
                 ))}
               </div>
               <div className="profile-menu-account-actions">

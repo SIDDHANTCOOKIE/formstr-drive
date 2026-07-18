@@ -18,6 +18,12 @@
   box-shadow: var(--shadow-xs);
 }
 
+/* Dragging a file over a folder row/tile — accent border, ready to receive. */
+.folder-row.drag-over {
+  background: var(--color-accent-subtle);
+  border-color: var(--color-accent);
+}
+
 .folder-row-icon {
   width: 40px;
   height: 40px;
@@ -72,6 +78,12 @@
 .folder-tile:hover {
   box-shadow: var(--shadow-md);
   border-color: var(--color-border-hover);
+}
+
+.folder-tile.drag-over {
+  background: var(--color-accent-subtle);
+  border-color: var(--color-accent);
+  box-shadow: var(--shadow-md);
 }
 
 .folder-tile-preview {

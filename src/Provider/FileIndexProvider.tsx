@@ -3,6 +3,7 @@ import {
   useState,
   useEffect,
   useCallback,
+  useMemo,
   useRef,
   useSyncExternalStore,
   type ReactNode,
@@ -88,8 +89,15 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
   const { uploadProgress, uploadPreparedFile, cancelUpload } = useUploader({ setFiles, setError });
   const { downloadProgress, downloadFile, cancelDownload } = useDownloader();
 
-  const foldersFromFiles = extractFolders(files);
-  const folders = Array.from(new Set([...foldersFromFiles, ...customFolders])).sort();
+  // Memoized so `folders` keeps a stable reference across re-renders that
+  // don't actually touch files/customFolders — without this, every render
+  // (uploadProgress ticks, unrelated parent re-renders, etc.) built a brand
+  // new array, which cascaded into a brand new context value below and
+  // forced every consumer (sidebar, file list, header) to re-render too.
+  const folders = useMemo(() => {
+    const foldersFromFiles = extractFolders(files);
+    return Array.from(new Set([...foldersFromFiles, ...customFolders])).sort();
+  }, [files, customFolders]);
 
   useEffect(() => {
     // Android downloads run in a foreground service and uploads stay alive via
@@ -460,32 +468,60 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
     setLegacyFiles([]);
   };
 
+  // Memoized so the context value's identity only changes when something in
+  // it actually changed — otherwise every re-render of this provider (for
+  // any reason) handed every consumer a brand new object, forcing them all
+  // to re-render too.
+  const value = useMemo(
+    () => ({
+      files,
+      folders,
+      customFolders,
+      addCustomFolder,
+      currentFolder,
+      setCurrentFolder,
+      loading,
+      hasHydratedIndex,
+      error,
+      uploadProgress,
+      uploadFile,
+      cancelUpload,
+      downloadProgress,
+      downloadFile,
+      cancelDownload,
+      deleteFile,
+      deleteFiles,
+      moveFile,
+      moveFiles,
+      renameFile,
+      refresh,
+    }),
+    [
+      files,
+      folders,
+      customFolders,
+      addCustomFolder,
+      currentFolder,
+      loading,
+      hasHydratedIndex,
+      error,
+      uploadProgress,
+      uploadFile,
+      cancelUpload,
+      downloadProgress,
+      downloadFile,
+      cancelDownload,
+      deleteFile,
+      deleteFiles,
+      moveFile,
+      moveFiles,
+      renameFile,
+      refresh,
+    ],
+  );
+
   return (
-    <FileIndexContext.Provider
-      value={{
-        files,
-        folders,
-        customFolders,
-        addCustomFolder,
-        currentFolder,
-        setCurrentFolder,
-        loading,
-        hasHydratedIndex,
-        error,
-        uploadProgress,
-        uploadFile,
-        cancelUpload,
-        downloadProgress,
-        downloadFile,
-        cancelDownload,
-        deleteFile,
-        deleteFiles,
-        moveFile,
-        moveFiles,
-        renameFile,
-        refresh,
-      }}
-    >
+    <FileIndexContext.Provider value={value}>
       <MigrationPromptModal
         files={legacyFiles}
         onAccept={handleAcceptMigration}

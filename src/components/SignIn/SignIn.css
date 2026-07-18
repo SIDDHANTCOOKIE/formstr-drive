@@ -109,13 +109,18 @@
   font-size: 16px;
   text-transform: uppercase;
   letter-spacing: var(--letter-spacing-wide);
-  transition: background var(--motion-fast) ease, border-color var(--motion-fast) ease, transform var(--motion-fast) ease;
+  /* Transition background-COLOR only, never the `background` shorthand: the
+     primary variant's background is a gradient (background-image), and
+     animating the shorthand makes background-image discretely drop to `none`
+     mid-transition while background-color is still transparent — a dark flash
+     that reads as hover flicker. Colour-only keeps secondary buttons smooth
+     and leaves the primary's gradient swap instant (no gap). */
+  transition: background-color var(--motion-fast) ease, border-color var(--motion-fast) ease;
 }
 
-.sign-in-choice-btn:hover {
-  background: var(--color-bg-hover);
+.sign-in-choice-btn:hover:not(.sign-in-choice-btn-primary) {
+  background-color: var(--color-bg-hover);
   border-color: var(--color-border-hover);
-  transform: translateY(-1px);
 }
 
 .sign-in-choice-btn-primary {
@@ -125,8 +130,10 @@
   box-shadow: var(--shadow-accent);
 }
 
+/* Stay a gradient (background-image) on hover so it swaps gradient→gradient
+   instantly — never dropping to `none` and exposing the dark card beneath. */
 .sign-in-choice-btn-primary:hover {
-  background: var(--color-accent-hover);
+  background: linear-gradient(180deg, var(--color-accent-hover), var(--color-accent-hover));
 }
 
 .sign-in-back-btn {

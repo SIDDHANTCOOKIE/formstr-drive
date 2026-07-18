@@ -16,6 +16,18 @@ export function getFolderName(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
+export function getFolderItemCount(
+  files: { folder: string }[],
+  folders: string[],
+  path: string
+): number {
+  const directFileCount = files.filter((f) => f.folder === path).length;
+  const directFolderCount = folders.filter((candidate) =>
+    isDirectChildFolder(path, candidate)
+  ).length;
+  return directFileCount + directFolderCount;
+}
+
 export function ancestorsOf(path: string): string[] {
   const parts = path.split("/").filter(Boolean);
   const chain: string[] = [];

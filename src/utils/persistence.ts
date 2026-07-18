@@ -14,6 +14,7 @@ export const STORAGE_KEYS = {
   AUTH_METHOD: "formstr-drive-auth-method",
   NSEC: "formstr-drive-nsec",
   DRIVE_KEY_CACHE: "formstr-drive-drive-key-cache",
+  PROFILE_CACHE: "formstr-drive-profile-cache",
 } as const;
 
 function parseStoredValue<T>(value: string | null, defaultValue: T): T {

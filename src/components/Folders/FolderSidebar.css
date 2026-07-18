@@ -116,12 +116,15 @@
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   position: relative;
-  transition: background var(--motion-fast) var(--motion-ease),
+  /* background-COLOR only — transitioning the `background` shorthand animates
+     every background sub-property (image/position/size) and can flicker on
+     repaint; the colour is all that changes here. */
+  transition: background-color var(--motion-fast) var(--motion-ease),
     border-color var(--motion-fast) var(--motion-ease);
 }
 
-.folder-item:hover {
-  background: var(--color-bg-hover);
+.folder-item:hover:not(.active) {
+  background-color: color-mix(in srgb, var(--color-text-primary) 6%, transparent);
 }
 
 .folder-item.active {
@@ -251,7 +254,7 @@
 }
 
 .recent-item:hover {
-  background: var(--color-bg-hover);
+  background-color: color-mix(in srgb, var(--color-text-primary) 6%, transparent);
 }
 
 .recent-item-name {

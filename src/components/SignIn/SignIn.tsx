@@ -29,6 +29,34 @@ function getUserFriendlyNsecError(error: unknown): string {
   return "Failed to sign in with nsec";
 }
 
+// @formstr/signer's loginWithExtension() throws raw, developer-facing
+// messages (e.g. "@formstr\signer: NIP-07 extension not found
+// (globalThis.nostr is undefined)" — the library even has a bug where
+// `\signer` isn't a valid escape, so it renders as the broken-looking
+// "@formstrsigner: ..."). Translate the ones we know into plain language
+// instead of surfacing library internals to the user.
+function getUserFriendlyExtensionError(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return "Failed to connect to NIP-07 extension";
+  }
+
+  const message = error.message;
+
+  if (/nip-07 extension not found|globalThis\.nostr is undefined/i.test(message)) {
+    return "No Nostr browser extension found. Install a NIP-07 signer extension (e.g. Alby, nos2x) and try again.";
+  }
+
+  if (/does not expose nip(04|44)/i.test(message)) {
+    return "Your Nostr extension doesn't support the encryption Drive needs. Try a different extension.";
+  }
+
+  if (/reject|denied|cancel/i.test(message)) {
+    return "Connection request was rejected in your extension.";
+  }
+
+  return message;
+}
+
 interface SignInProps {
   /** Rendered inside AddAccountModal rather than as the full-page sign-in
    * screen — swaps the copy, everything else (every login method) is
@@ -105,11 +133,7 @@ export function SignIn({ embedded = false }: SignInProps) {
     try {
       await requestPubkey();
     } catch (loginError) {
-      setError(
-        loginError instanceof Error
-          ? loginError.message
-          : "Failed to connect to NIP-07 extension",
-      );
+      setError(getUserFriendlyExtensionError(loginError));
     } finally {
       setLoadingExtension(false);
     }

@@ -21,6 +21,7 @@
   align-items: center;
   min-width: 0;
   overflow: hidden;
+  padding-left: var(--space-3);
 }
 
 .breadcrumb-item {

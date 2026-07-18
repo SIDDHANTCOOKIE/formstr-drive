@@ -5,8 +5,9 @@ import { FileCard } from "./FileCard";
 import { UploadZone } from '../Upload/UploadZone';
 import { SearchIcon, GridViewIcon, ListViewIcon, FolderIcon } from '../icons/Icons';
 
-import { isDirectChildFolder, getFolderName } from '../../utils/folder';
+import { isDirectChildFolder, getFolderName, getFolderItemCount } from '../../utils/folder';
 import { type SortKey, SORT_LABEL } from '../../utils/constants';
+import { FILE_HASH_MIME } from '../../utils/constants';
 
 export function FileList() {
   const {
@@ -27,6 +28,7 @@ export function FileList() {
   const [bulkAction, setBulkAction] = useState<"move" | "delete" | null>(null);
   const [showMoveDialog, setShowMoveDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
   const normalizedQuery = searchQuery.trim().toLowerCase();
   const isGridView = viewMode === "grid";
 
@@ -138,6 +140,14 @@ export function FileList() {
     } finally {
       setBulkAction(null);
     }
+  };
+
+  const handleDropOnFolder = (folder: string, e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOverFolder(null);
+    const raw = e.dataTransfer.getData(FILE_HASH_MIME);
+    if (!raw) return;
+    void moveFiles(raw.split(","), folder);
   };
 
   const handleBulkMove = async (folder: string) => {
@@ -319,14 +329,26 @@ export function FileList() {
           </div>
         ) : (
           <div className={isGridView ? "file-grid" : "file-list-view"}>
-            {currentFolders.map((folderPath) =>
-              isGridView ? (
+            {currentFolders.map((folderPath) => {
+              const itemCount = getFolderItemCount(files, folders, folderPath);
+              const itemsLabel = `${itemCount} item${itemCount === 1 ? "" : "s"}`;
+              const dragHandlers = {
+                onDragOver: (e: React.DragEvent) => {
+                  e.preventDefault();
+                  setDragOverFolder(folderPath);
+                },
+                onDragLeave: () => setDragOverFolder(null),
+                onDrop: (e: React.DragEvent) => handleDropOnFolder(folderPath, e),
+              };
+
+              return isGridView ? (
                 <button
                   key={folderPath}
                   type="button"
-                  className="folder-tile"
+                  className={`folder-tile${dragOverFolder === folderPath ? " drag-over" : ""}`}
                   onClick={() => setCurrentFolder(folderPath)}
                   title={`Open ${getFolderName(folderPath)}`}
+                  {...dragHandlers}
                 >
                   <div className="folder-tile-preview">
                     <FolderIcon className="folder-tile-icon" />
@@ -335,16 +357,17 @@ export function FileList() {
                     <span className="folder-tile-name" title={getFolderName(folderPath)}>
                       {getFolderName(folderPath)}
                     </span>
-                    <span className="folder-tile-meta">Folder</span>
+                    <span className="folder-tile-meta">{itemsLabel}</span>
                   </div>
                 </button>
               ) : (
                 <button
                   key={folderPath}
                   type="button"
-                  className="folder-row"
+                  className={`folder-row${dragOverFolder === folderPath ? " drag-over" : ""}`}
                   onClick={() => setCurrentFolder(folderPath)}
                   title={`Open ${getFolderName(folderPath)}`}
+                  {...dragHandlers}
                 >
                   <div className="folder-row-icon" aria-hidden="true">
                     <FolderIcon />
@@ -353,11 +376,11 @@ export function FileList() {
                     <span className="folder-row-name" title={getFolderName(folderPath)}>
                       {getFolderName(folderPath)}
                     </span>
-                    <span className="folder-row-meta">Folder</span>
+                    <span className="folder-row-meta">{itemsLabel}</span>
                   </div>
                 </button>
-              )
-            )}
+              );
+            })}
 
             {currentFiles.map((file) => (
               <FileCard

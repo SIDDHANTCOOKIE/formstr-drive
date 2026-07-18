@@ -6,7 +6,7 @@ interface FolderSidebarProps {
   onClose: () => void;
 }
 
-import { isDirectChildFolder, getFolderName, ancestorsOf } from '../../utils/folder';
+import { isDirectChildFolder, getFolderName, ancestorsOf, getFolderItemCount } from '../../utils/folder';
 import { FILE_HASH_MIME } from '../../utils/constants';
 import { HomeIcon, FolderIcon, ChevronIcon } from '../icons/Icons';
 
@@ -166,13 +166,7 @@ export function FolderSidebar({ isOpen, onClose }: FolderSidebarProps) {
     });
   };
 
-  const getItemCount = (folder: string) => {
-    const directFileCount = files.filter((f) => f.folder === folder).length;
-    const directFolderCount = folders.filter((candidate) =>
-      isDirectChildFolder(folder, candidate)
-    ).length;
-    return directFileCount + directFolderCount;
-  };
+  const getItemCount = (folder: string) => getFolderItemCount(files, folders, folder);
 
   const handleDropFiles = (folder: string, hashes: string[]) => {
     if (hashes.length === 0) return;
