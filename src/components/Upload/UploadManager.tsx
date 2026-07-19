@@ -1,7 +1,22 @@
-import { useFileIndex } from '../../hooks/useFileContext';
+import { useSyncExternalStore } from 'react';
 import { TransferManager } from "./TransferManager";
+import { getTransfers, subscribeToTransfers, cancelTransfer } from '../../transfers/transferStore';
+import { retryTransfer, dismissTransfer } from '../../transfers/transferQueue';
 
 export function UploadManager() {
-  const { uploadProgress, cancelUpload } = useFileIndex();
-  return <TransferManager type="upload" progress={uploadProgress} onCancel={cancelUpload} />;
+  const transfers = useSyncExternalStore(subscribeToTransfers, getTransfers);
+
+  const uploads = transfers.filter((t) => t.type === "upload");
+
+  if (uploads.length === 0) return null;
+
+  return (
+    <TransferManager
+      type="upload"
+      transfers={uploads}
+      onCancel={cancelTransfer}
+      onRetry={retryTransfer}
+      onDismiss={dismissTransfer}
+    />
+  );
 }

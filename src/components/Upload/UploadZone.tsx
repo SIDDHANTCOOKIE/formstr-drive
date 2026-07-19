@@ -1,40 +1,23 @@
 import { useState, useCallback, useRef } from "react";
 import { useFileIndex } from '../../hooks/useFileContext';
 import { useBlossomServer } from '../../hooks/useBlossomServer';
-import { isAbortError } from '../../utils/abortError';
+import { queueUpload } from '../../transfers/transferQueue';
 
 export function UploadZone() {
-  const { uploadFile } = useFileIndex();
+  const { currentFolder } = useFileIndex();
   const { selectedServer } = useBlossomServer();
   const [isDragging, setIsDragging] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFiles = useCallback(
-    async (files: FileList) => {
-      setError(null);
-      setUploading(true);
-      const fileArray = Array.from(files);
-      const errors: string[] = [];
-
-      for (const file of fileArray) {
-        try {
-          await uploadFile(file, selectedServer);
-        } catch (e) {
-          if (isAbortError(e)) {
-            break;
-          }
-          errors.push(`${file.name}: ${e instanceof Error ? e.message : "Upload failed"}`);
-        }
+    (files: FileList) => {
+      // Enqueue every file; the queue serializes uploads (concurrency 1) and the
+      // transfer panel is the source of truth for progress, errors and retry.
+      for (const file of Array.from(files)) {
+        queueUpload(file, selectedServer, currentFolder);
       }
-
-      if (errors.length > 0) {
-        setError(errors.join("\n"));
-      }
-      setUploading(false);
     },
-    [uploadFile, selectedServer]
+    [selectedServer, currentFolder]
   );
 
   const handleDrop = useCallback(
@@ -72,7 +55,7 @@ export function UploadZone() {
   return (
     <div className="upload-zone-wrapper">
       <div
-        className={`upload-zone ${isDragging ? "dragging" : ""} ${uploading ? "uploading" : ""}`}
+        className={`upload-zone ${isDragging ? "dragging" : ""}`}
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -85,16 +68,9 @@ export function UploadZone() {
           onChange={handleFileChange}
           style={{ display: "none" }}
         />
-        {uploading ? (
-          <span className="upload-status">
-            Uploading...
-          </span>
-        ) : (
-          <span className="upload-prompt">
-            Drop files here or click to upload
-          </span>
-        )}
-        {error && <span className="upload-error">{error}</span>}
+        <span className="upload-prompt">
+          Drop files here or click to upload
+        </span>
       </div>
     </div>
   );

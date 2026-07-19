@@ -3,15 +3,13 @@ import type { FileMetadata } from '../../types/metadata';
 import { useFileIndex } from '../../hooks/useFileContext';
 import { decryptFileWithKey } from '../../crypto';
 import { BlossomClient } from '../../blossom';
-import { openDownloadedFile } from '../../native/driveManifest';
-import { isNativePlatform } from '../../utils/platform';
 import { FilePreviewModal } from "./FilePreviewModal";
 import { detectMimeTypeFromMagicBytes, getFileIcon, MAX_PREVIEW_SIZE } from '../../utils/fileTypeHelpers';
 import { useToast } from '../../hooks/useToast';
-import { isAbortError } from '../../utils/abortError';
 import { FILE_HASH_MIME } from '../../utils/constants';
 import { formatSize, formatDate, getHostname } from '../../utils/format';
 import { PreviewEyeIcon } from '../icons/Icons';
+import { queueDownload } from "../../transfers/transferQueue";
 
 interface FileCardProps {
   file: FileMetadata;
@@ -68,9 +66,8 @@ export function FileCard({
   selected = false,
   onToggleSelection,
 }: FileCardProps) {
-  const { deleteFile, moveFile, folders, renameFile, downloadFile } = useFileIndex();
+  const { deleteFile, moveFile, folders, renameFile } = useFileIndex();
   const toast = useToast();
-  const [downloading, setDownloading] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [showMoveDialog, setShowMoveDialog] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
@@ -147,26 +144,13 @@ export function FileCard({
     setShowPreview(true);
   };
 
-  const handleDownload = async () => {
-    setDownloading(true);
-    try {
-      const result = await downloadFile(file);
-      const uri = result?.uri ?? null;
-      toast.success("Downloaded successfully", {
-        action:
-          isNativePlatform && uri
-            ? {
-                label: "View",
-                onClick: () => openDownloadedFile(uri, file.type || "application/octet-stream"),
-              }
-            : undefined,
-      });
-    } catch (e) {
-      if (!isAbortError(e)) {
-        toast.error(e instanceof Error ? e.message : "Download failed");
-      }
-    } finally {
-      setDownloading(false);
+  const handleDownload = () => {
+    // The transfer panel is the source of truth for progress, errors and retry,
+    // so there's no success toast here. Only tell the user when the click was a
+    // no-op because the file is already downloading.
+    const started = queueDownload(file);
+    if (!started) {
+      toast.info("This file is already downloading");
     }
   };
 
@@ -359,10 +343,9 @@ export function FileCard({
                   e.stopPropagation();
                   handleDownload();
                 }}
-                disabled={downloading}
                 title="Download"
               >
-                {downloading ? "…" : "↓"}
+                ↓
               </button>
               <button
                 className="tile-action-btn"
@@ -441,8 +424,8 @@ export function FileCard({
           </span>
         </div>
         <div className="file-actions">
-          <button className="action-btn" onClick={handleDownload} disabled={downloading} title="Download">
-            {downloading ? "..." : "↓"}
+          <button className="action-btn" onClick={handleDownload} title="Download">
+            ↓
           </button>
           <button 
             className="action-btn" 

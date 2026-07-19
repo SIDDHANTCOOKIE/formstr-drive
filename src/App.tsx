@@ -52,8 +52,10 @@ function DriveLayout() {
         <main className="drive-main">
           <FileList />
         </main>
-        <UploadManager />
-        <DownloadManager />
+        <div className="transfer-managers-container">
+          <UploadManager />
+          <DownloadManager />
+        </div>
       </div>
     </div>
   );

@@ -148,7 +148,7 @@ export function ProfileMenu() {
 
       {open && (
         <div className="profile-menu-panel" role="menu">
-          {pubkey && accounts.length > 0 ? (
+          {accounts.length > 0 ? (
             <div className="profile-menu-section">
               <p className="profile-menu-label">Accounts</p>
               <div className="profile-menu-accounts">

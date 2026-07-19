@@ -1,9 +1,6 @@
 .upload-manager {
-  position: fixed;
-  bottom: var(--space-12);
-  right: var(--space-12);
-  width: calc(100% - 48px);
-  max-width: 320px;
+  position: relative;
+  width: 100%;
   background: var(--color-bg-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
@@ -17,8 +14,20 @@
   animation: slideUp 0.3s ease-out;
 }
 
+.transfer-managers-container {
+  position: fixed;
+  bottom: var(--space-12);
+  right: var(--space-12);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  z-index: var(--z-overlay);
+  width: calc(100% - 48px);
+  max-width: 320px;
+}
+
 @media (min-width: 768px) {
-  .upload-manager {
+  .transfer-managers-container {
     right: auto;
     left: var(--space-12);
     width: 320px;
@@ -68,10 +77,67 @@
   padding: var(--space-6) var(--space-8);
 }
 
+/* Multiple queued transfers stack vertically; a tall queue scrolls inside the
+   card rather than growing off-screen. */
+.transfer-list-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  max-height: 320px;
+  overflow-y: auto;
+}
+
 .upload-item {
   display: flex;
   align-items: center;
   gap: var(--space-6);
+}
+
+.transfer-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.transfer-action-btn {
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.transfer-action-btn:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+.transfer-status-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  flex-shrink: 0;
+}
+
+.transfer-status-icon--done {
+  color: var(--color-success);
+}
+
+.upload-item-stage--error {
+  color: var(--color-danger, var(--color-warning));
+}
+
+.transfer-item--failed .upload-item-icon,
+.transfer-item--cancelled .upload-item-icon {
+  color: var(--color-text-secondary);
+  opacity: 0.7;
 }
 
 .upload-item-icon {
