@@ -3,6 +3,7 @@ import {
   useState,
   useEffect,
   useCallback,
+  useMemo,
   useRef,
   useSyncExternalStore,
   type ReactNode,
@@ -21,7 +22,7 @@ import {
   getRelayRefresh,
   subscribeRelayRefresh,
 } from "../dataLayer/relayRefresh";
-import { MigrationPromptModal } from "../components/MigrationPromptModal";
+import { MigrationPromptModal } from "../components/Dialogs/MigrationPromptModal";
 import { useProfileContext } from "../hooks/useProfileContext";
 import { getStoredItem, setStoredItem, STORAGE_KEYS } from "../utils/persistence";
 import {
@@ -33,10 +34,12 @@ import {
 } from "../native/driveManifest";
 import { useBlossomServer } from "../hooks/useBlossomServer";
 import { isAndroidPlatform } from "../utils/platform";
-import { useUploader, type UploadProgress } from "../hooks/useUploader";
-import { useDownloader, type DownloadProgress } from "../hooks/useDownloader";
+import { queueUpload } from "../transfers/transferQueue";
+import { getTransfers } from "../transfers/transferStore";
+import { adoptActiveNativeDownloads, startNativeEventBridge } from "../transfers/nativeAdoption";
 
-export type { UploadProgress, DownloadProgress };
+// Re-export type if needed anywhere else
+export type { FileMetadata };
 
 export interface FileIndexContextType {
   files: FileMetadata[];
@@ -48,12 +51,6 @@ export interface FileIndexContextType {
   loading: boolean;
   hasHydratedIndex: boolean;
   error: string | null;
-  uploadProgress: UploadProgress | null;
-  uploadFile: (file: File, server: string) => Promise<void>;
-  cancelUpload: () => void;
-  downloadProgress: DownloadProgress | null;
-  downloadFile: (file: FileMetadata) => Promise<{ uri: string | null }>;
-  cancelDownload: () => void;
   deleteFile: (hash: string) => Promise<void>;
   deleteFiles: (hashes: string[]) => Promise<void>;
   moveFile: (hash: string, newFolder: string) => Promise<void>;
@@ -85,29 +82,36 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
   // file-index observe against the now-populated store.
   const relayRefresh = useSyncExternalStore(subscribeRelayRefresh, getRelayRefresh);
 
-  const { uploadProgress, uploadPreparedFile, cancelUpload } = useUploader({ setFiles, setError });
-  const { downloadProgress, downloadFile, cancelDownload } = useDownloader();
+  // Memoized so `folders` keeps a stable reference across re-renders that
+  // don't actually touch files/customFolders — without this, every render
+  // (uploadProgress ticks, unrelated parent re-renders, etc.) built a brand
+  // new array, which cascaded into a brand new context value below and
+  // forced every consumer (sidebar, file list, header) to re-render too.
+  const folders = useMemo(() => {
+    const foldersFromFiles = extractFolders(files);
+    return Array.from(new Set([...foldersFromFiles, ...customFolders])).sort();
+  }, [files, customFolders]);
 
-  const foldersFromFiles = extractFolders(files);
-  const folders = Array.from(new Set([...foldersFromFiles, ...customFolders])).sort();
-
+  // Warn before the tab/window closes while transfers are still in flight and
+  // would be lost. A native download runs in a foreground service and survives,
+  // so it needs no warning; a native upload runs in the webview (background
+  // upload is disabled) and DOES die — so the rule is: warn unless every active
+  // transfer is a native download. On web nothing survives a close, so any
+  // active transfer warns.
   useEffect(() => {
-    // Android downloads run in a foreground service and uploads stay alive via
-    // the upload service's notification, so there's nothing to warn about here.
-    if (isAndroidPlatform || (!uploadProgress && !downloadProgress)) {
-      return;
-    }
-
-    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = "";
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      const active = getTransfers().filter(
+        (t) => t.status === "running" || t.status === "pending",
+      );
+      if (active.length === 0) return;
+      const allSurvive = active.every((t) => t.type === "download" && isAndroidPlatform);
+      if (allSurvive) return;
+      e.preventDefault();
+      e.returnValue = "";
     };
-
     window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => {
-      window.removeEventListener("beforeunload", handleBeforeUnload);
-    };
-  }, [uploadProgress, downloadProgress]);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, []);
 
   useEffect(() => {
     const loadCustomFolders = async () => {
@@ -138,6 +142,30 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
       });
     }
   }, [isSignedIn, pubkey, restoring]);
+
+  // Android only: re-adopt native downloads that outlived the JS context (app
+  // killed/relaunched mid-download) so they reappear as cancellable rows, and
+  // keep a single app-lifetime listener routing their progress/completion.
+  useEffect(() => {
+    if (!isAndroidPlatform) return;
+
+    let teardown: (() => void) | undefined;
+    void startNativeEventBridge().then((fn) => {
+      teardown = fn;
+    });
+    void adoptActiveNativeDownloads();
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        void adoptActiveNativeDownloads();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      teardown?.();
+    };
+  }, []);
 
   const addCustomFolder = useCallback((path: string) => {
     setCustomFolders((prev) => {
@@ -206,12 +234,7 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
     hasHydratedIndex,
   ]);
 
-  const uploadFile = useCallback(
-    async (file: File, server: string) => {
-      await uploadPreparedFile(file, server, currentFolder);
-    },
-    [currentFolder, uploadPreparedFile],
-  );
+
 
   const deleteRemoteBlobs = useCallback(async (file: FileMetadata) => {
     // Chunked files store one blob per chunk; legacy files store a single
@@ -382,12 +405,16 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
             type: importPayload.mimeType || "application/octet-stream",
           });
 
-          await uploadPreparedFile(
-            importedFile,
-            selectedServer,
-            importPayload.folderPath,
-          );
-          await removePendingNativeImport(importPayload.id);
+          // Delete the on-device pending import ONLY after the upload confirms
+          // success. If the upload fails, is cancelled, or the app is killed
+          // before it finishes, the import is retained and retried on the next
+          // launch (at-least-once) rather than being lost. A still-running
+          // upload with the same id dedupes, so re-scanning is safe.
+          queueUpload(importedFile, selectedServer, importPayload.folderPath, {
+            onComplete: () => {
+              void removePendingNativeImport(importPayload.id);
+            },
+          });
         } catch (pendingError) {
           console.error("Failed to process pending Android Files import", pendingError);
           setError(
@@ -407,7 +434,6 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
     loading,
     pubkey,
     selectedServer,
-    uploadPreparedFile,
   ]);
 
   useEffect(() => {
@@ -460,32 +486,48 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
     setLegacyFiles([]);
   };
 
+  // Memoized so the context value's identity only changes when something in
+  // it actually changed — otherwise every re-render of this provider (for
+  // any reason) handed every consumer a brand new object, forcing them all
+  // to re-render too.
+  const value = useMemo(
+    () => ({
+      files,
+      folders,
+      customFolders,
+      addCustomFolder,
+      currentFolder,
+      setCurrentFolder,
+      loading,
+      hasHydratedIndex,
+      error,
+      deleteFile,
+      deleteFiles,
+      moveFile,
+      moveFiles,
+      renameFile,
+      refresh,
+    }),
+    [
+      files,
+      folders,
+      customFolders,
+      addCustomFolder,
+      currentFolder,
+      loading,
+      hasHydratedIndex,
+      error,
+      deleteFile,
+      deleteFiles,
+      moveFile,
+      moveFiles,
+      renameFile,
+      refresh,
+    ],
+  );
+
   return (
-    <FileIndexContext.Provider
-      value={{
-        files,
-        folders,
-        customFolders,
-        addCustomFolder,
-        currentFolder,
-        setCurrentFolder,
-        loading,
-        hasHydratedIndex,
-        error,
-        uploadProgress,
-        uploadFile,
-        cancelUpload,
-        downloadProgress,
-        downloadFile,
-        cancelDownload,
-        deleteFile,
-        deleteFiles,
-        moveFile,
-        moveFiles,
-        renameFile,
-        refresh,
-      }}
-    >
+    <FileIndexContext.Provider value={value}>
       <MigrationPromptModal
         files={legacyFiles}
         onAccept={handleAcceptMigration}

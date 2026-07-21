@@ -1,3 +1,5 @@
+import { withTimeout } from "./transfers/withTimeout";
+
 export class BlossomError extends Error {
   isCorsError: boolean;
 
@@ -43,15 +45,37 @@ export class BlossomClient {
       xhr.setRequestHeader("Content-Type", "application/octet-stream");
       xhr.setRequestHeader("X-SHA-256", hexHash);
 
-      if (onProgress && xhr.upload) {
+      let idleTimer = setTimeout(() => {
+        xhr.abort();
+        reject(new Error("Upload timed out after 60s of inactivity"));
+      }, 60000);
+
+      if (xhr.upload) {
         xhr.upload.onprogress = (event) => {
-          if (event.lengthComputable) {
+          clearTimeout(idleTimer);
+          idleTimer = setTimeout(() => {
+            xhr.abort();
+            reject(new Error("Upload timed out after 60s of inactivity"));
+          }, 60000);
+          if (onProgress && event.lengthComputable) {
             onProgress(Math.round((event.loaded / event.total) * 100));
           }
+        };
+        // Once the whole body is sent, upload-progress events stop while the
+        // server hashes and stores the blob. Without switching timers here, that
+        // silent server-processing window trips the 60s idle timeout and aborts
+        // an upload that actually succeeded. Give the server a generous window.
+        xhr.upload.onload = () => {
+          clearTimeout(idleTimer);
+          idleTimer = setTimeout(() => {
+            xhr.abort();
+            reject(new Error("Upload timed out: server did not respond after 120s"));
+          }, 120000);
         };
       }
 
       xhr.onload = () => {
+        clearTimeout(idleTimer);
         if (xhr.status >= 200 && xhr.status < 300) {
           try {
             const json = JSON.parse(xhr.responseText);
@@ -65,6 +89,7 @@ export class BlossomClient {
       };
 
       xhr.onerror = () => {
+        clearTimeout(idleTimer);
         reject(
           new BlossomError(
             `Network error: Unable to reach ${this.baseUrl}. The server may have dropped the connection or rate-limited the request.`,
@@ -74,6 +99,7 @@ export class BlossomClient {
       };
 
       xhr.onabort = () => {
+        clearTimeout(idleTimer);
         reject(new DOMException("Upload aborted", "AbortError"));
       };
 
@@ -93,10 +119,15 @@ export class BlossomClient {
   ): Promise<Uint8Array> {
     let res: Response;
     try {
-      res = await fetch(`${this.baseUrl}/${sha256}`, {
-        headers: authHeader ? { Authorization: authHeader } : {},
-        signal,
-      });
+      res = await withTimeout(
+        fetch(`${this.baseUrl}/${sha256}`, {
+          headers: authHeader ? { Authorization: authHeader } : {},
+          signal,
+        }),
+        60000,
+        "fetch-timeout",
+        `Blossom download timed out after 60s for ${sha256}`
+      );
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") {
         throw e;
