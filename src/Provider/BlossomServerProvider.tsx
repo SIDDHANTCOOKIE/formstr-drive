@@ -18,9 +18,30 @@ const DEFAULT_SERVERS = [
   "https://blossom.oxtr.dev",
 ];
 
-interface ServerInfo {
+export interface ServerInfo {
   url: string;
   source: "default" | "relay" | "custom";
+}
+
+/**
+ * The candidate list for automatic upload fallback: the selected server
+ * first, then the user's other known DEFAULT/custom servers. Deliberately
+ * excludes relay-discovered ("relay" source) servers unless one is already
+ * the selection — those are arbitrary third-party URLs the user never
+ * reviewed, and while file content is end-to-end encrypted before upload, the
+ * BUD-02 auth event still exposes the identity pubkey, blob hash, and timing
+ * to whatever server receives it. Automatically fanning that out beyond the
+ * trusted (default + user-added) set isn't a call this function should make
+ * on its own.
+ */
+export function getUploadCandidateServers(
+  selectedServer: string,
+  servers: ServerInfo[],
+): string[] {
+  const rest = servers
+    .filter((s) => s.source !== "relay" && s.url !== selectedServer)
+    .map((s) => s.url);
+  return [selectedServer, ...rest];
 }
 
 export interface BlossomServerContextType {

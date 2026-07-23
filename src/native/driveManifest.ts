@@ -1,5 +1,5 @@
 import { registerPlugin, type PluginListenerHandle } from "@capacitor/core";
-import { chunkHashes, type ChunkRef, type FileMetadata } from "../types/metadata";
+import { chunkHashes, hasChunkServerOverride, primaryBlobHash, type ChunkRef, type FileMetadata } from "../types/metadata";
 import { isAndroidPlatform } from "../utils/platform";
 
 export interface NativeDownloadStartedEvent {
@@ -245,25 +245,34 @@ export function buildNativeDriveManifest(
     };
   });
 
-  const driveFiles: NativeDriveFileEntry[] = files.map((file) => {
-    const folderPath = normalizeFolderPath(file.folder);
+  // The native side (DriveFilesDocumentsProvider / DriveFileDownloader.java)
+  // reads a file's chunks using ONE `server` string — it has no concept of a
+  // per-chunk override. Rather than risk it fetching a fallback-routed chunk
+  // from the wrong server (corrupting the read), such files are simply left
+  // out of the native Files-app manifest entirely; they remain fully
+  // accessible through the app's own UI, which does resolve per-chunk
+  // servers correctly (see types/metadata.ts's resolveChunks).
+  const driveFiles: NativeDriveFileEntry[] = files
+    .filter((file) => !hasChunkServerOverride(file.chunks, file.server))
+    .map((file) => {
+      const folderPath = normalizeFolderPath(file.folder);
 
-    return {
-      id: toFileDocumentId(file.hash),
-      hash: file.hash,
-      name: file.name,
-      mimeType: file.type || "application/octet-stream",
-      size: file.size,
-      folderPath,
-      parentId:
-        folderPath === "/" ? ROOT_DOCUMENT_ID : toFolderDocumentId(folderPath),
-      uploadedAt: file.uploadedAt,
-      server: file.server,
-      encryptionKey: file.encryptionKey,
-      ...(file.previewHash ? { previewHash: file.previewHash } : {}),
-      ...(file.chunks ? { chunks: chunkHashes(file.chunks) } : {}),
-    };
-  });
+      return {
+        id: toFileDocumentId(file.id),
+        hash: primaryBlobHash(file.chunks) ?? "",
+        name: file.name,
+        mimeType: file.type || "application/octet-stream",
+        size: file.size,
+        folderPath,
+        parentId:
+          folderPath === "/" ? ROOT_DOCUMENT_ID : toFolderDocumentId(folderPath),
+        uploadedAt: file.uploadedAt,
+        server: file.server,
+        encryptionKey: file.encryptionKey,
+        ...(file.previewHash ? { previewHash: file.previewHash } : {}),
+        ...(file.chunks ? { chunks: chunkHashes(file.chunks) } : {}),
+      };
+    });
 
   return {
     version: 1,
@@ -420,7 +429,6 @@ export async function downloadFileToDownloads(
   file: {
     server: string;
     chunks?: ChunkRef[];
-    hash: string;
     encryptionKey: string;
     name: string;
     type?: string;
@@ -433,11 +441,15 @@ export async function downloadFileToDownloads(
     throw new Error("Native download is only available on Android");
   }
   const plugin = driveFilesPlugin;
+  // The native plugin correlates a download by its first blob's hash (see
+  // downloadStarted below), so it needs a single address the same way the
+  // manifest's `hash` field does.
+  const hash = primaryBlobHash(file.chunks) ?? "";
 
   await ensureNativeListeners();
 
   const callbacks: DownloadCallbacks = { onProgress, onStarted };
-  pendingDownloadsByHash.set(file.hash, callbacks);
+  pendingDownloadsByHash.set(hash, callbacks);
 
   try {
     // No timeout here: downloadToDownloads resolves only when the *whole* file
@@ -446,7 +458,7 @@ export async function downloadFileToDownloads(
     return await plugin.downloadToDownloads({
       server: file.server,
       chunks: chunkHashes(file.chunks),
-      hash: file.hash,
+      hash,
       encryptionKey: file.encryptionKey,
       fileName: file.name,
       mimeType: file.type || "application/octet-stream",
@@ -458,7 +470,7 @@ export async function downloadFileToDownloads(
     }
     throw e;
   } finally {
-    pendingDownloadsByHash.delete(file.hash);
+    pendingDownloadsByHash.delete(hash);
     if (callbacks.nativeId) activeDownloadsById.delete(callbacks.nativeId);
   }
 }

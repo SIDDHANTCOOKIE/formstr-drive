@@ -2,11 +2,17 @@ import { withTimeout } from "./transfers/withTimeout";
 
 export class BlossomError extends Error {
   isCorsError: boolean;
+  /** The server's HTTP status, when the request reached it and got a real
+   *  response (as opposed to a network-level failure, which has no status).
+   *  Callers use this to tell a permanent rejection (415 unsupported media
+   *  type, 401/403 not authorized) apart from a transient one worth retrying. */
+  status?: number;
 
-  constructor(message: string, opts?: { isCorsError?: boolean }) {
+  constructor(message: string, opts?: { isCorsError?: boolean; status?: number }) {
     super(message);
     this.name = "BlossomError";
     this.isCorsError = opts?.isCorsError ?? false;
+    this.status = opts?.status;
   }
 }
 
@@ -84,7 +90,7 @@ export class BlossomClient {
             resolve(xhr.responseText);
           }
         } else {
-          reject(new BlossomError(xhr.getResponseHeader("X-Reason") || xhr.statusText));
+          reject(new BlossomError(xhr.getResponseHeader("X-Reason") || xhr.statusText, { status: xhr.status }));
         }
       };
 
@@ -92,7 +98,11 @@ export class BlossomClient {
         clearTimeout(idleTimer);
         reject(
           new BlossomError(
-            `Network error: Unable to reach ${this.baseUrl}. The server may have dropped the connection or rate-limited the request.`,
+            // The browser reports any network-level failure this way — an actual
+            // CORS block, a dropped/reset connection, a DNS hiccup, or rate
+            // limiting all look identical to JS. `isCorsError` is a best guess,
+            // not a confirmed diagnosis.
+            `Network error reaching ${this.baseUrl} — the connection was blocked or dropped. This can be a CORS misconfiguration, a network hiccup, or a temporary outage.`,
             { isCorsError: true }
           )
         );
@@ -134,7 +144,7 @@ export class BlossomClient {
       }
       if (e instanceof TypeError) {
         throw new BlossomError(
-          `Network error: Unable to reach ${this.baseUrl}. This may be a CORS issue.`,
+          `Network error reaching ${this.baseUrl} — the connection was blocked or dropped. This can be a CORS misconfiguration, a network hiccup, or a temporary outage.`,
           { isCorsError: true },
         );
       }
@@ -142,7 +152,7 @@ export class BlossomClient {
     }
 
     if (!res.ok) {
-      throw new BlossomError(res.headers.get("X-Reason") || res.statusText);
+      throw new BlossomError(res.headers.get("X-Reason") || res.statusText, { status: res.status });
     }
 
     if (onProgress && res.body) {
@@ -192,7 +202,7 @@ export class BlossomClient {
     } catch (e) {
       if (e instanceof TypeError) {
         throw new BlossomError(
-          `Network error: Unable to reach ${this.baseUrl}. This may be a CORS issue.`,
+          `Network error reaching ${this.baseUrl} — the connection was blocked or dropped. This can be a CORS misconfiguration, a network hiccup, or a temporary outage.`,
           { isCorsError: true },
         );
       }
@@ -205,7 +215,7 @@ export class BlossomClient {
     }
 
     if (!res.ok) {
-      throw new BlossomError(res.headers.get("X-Reason") || res.statusText);
+      throw new BlossomError(res.headers.get("X-Reason") || res.statusText, { status: res.status });
     }
 
     return true;

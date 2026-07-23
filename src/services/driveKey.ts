@@ -14,11 +14,12 @@ const METADATA_KIND = 34578;
 const HEX_64 = /^[0-9a-fA-F]{64}$/;
 const CACHE_IO_TIMEOUT_MS = 3000;
 
-// A single decrypted Drive Key: the secp256k1 secret plus its derived
-// conversation key (used directly by NIP-44 v2). Keeping the secret hex lets us
-// re-encrypt with it when saving new file metadata.
+// A single decrypted Drive Key: the secp256k1 secret plus its derived pubkey
+// and conversation key (used directly by NIP-44 v2). Keeping the secret hex
+// lets us re-encrypt with it, and now sign with it, when saving file metadata.
 interface DriveKeyEntry {
   secretKeyHex: string;
+  publicKey: string;
   conversationKey: Uint8Array;
 }
 
@@ -46,6 +47,7 @@ signerManager.onChange((pubkey) => {
     cachedPubkey = null;
     activeSecretKeyHex = null;
     void removeStoredItem(STORAGE_KEYS.DRIVE_KEY_CACHE);
+    void removeStoredItem(STORAGE_KEYS.DRIVE_PUBKEY_CACHE);
   }
 });
 
@@ -53,10 +55,11 @@ function getDriveKeyDTag(pubkey: string): string {
   return `0:${pubkey}`;
 }
 
-function buildConversationKey(secretKeyHex: string): Uint8Array {
+function deriveKeyMaterial(secretKeyHex: string): { publicKey: string; conversationKey: Uint8Array } {
   const secretKey = hexToBytes(secretKeyHex);
-  const drivePublicKey = getPublicKey(secretKey);
-  return nip44.v2.utils.getConversationKey(secretKey, drivePublicKey);
+  const publicKey = getPublicKey(secretKey);
+  const conversationKey = nip44.v2.utils.getConversationKey(secretKey, publicKey);
+  return { publicKey, conversationKey };
 }
 
 /** Resolve `fallback` if `promise` hasn't settled within `ms`. Never rejects. */
@@ -117,9 +120,53 @@ async function savePayloadCache(
   }
 }
 
+// -----------------------------------------------------------------------------
+// Drive pubkey cache. Pubkeys are public the moment we publish anything under
+// them, so — unlike the encrypted-payload cache above — this is not sensitive
+// and exists purely so the file-index author filter can be declared instantly
+// on a warm start, without waiting on the signer.
+// -----------------------------------------------------------------------------
+
+async function saveCachedDrivePubkeys(identityPubkey: string, drivePubkeys: string[]): Promise<void> {
+  try {
+    await withTimeout(
+      setStoredItem(STORAGE_KEYS.DRIVE_PUBKEY_CACHE, { pubkey: identityPubkey, drivePubkeys }),
+      CACHE_IO_TIMEOUT_MS,
+      undefined,
+    );
+  } catch (e) {
+    console.warn("[DriveKey] Failed to write drive pubkey cache", e);
+  }
+}
+
+/** Cached drive pubkeys for `identityPubkey`, or [] if none cached yet (e.g.
+ *  first run on this device). Never throws, never touches the signer. */
+export async function getCachedDrivePubkeys(identityPubkey: string): Promise<string[]> {
+  const stored = await withTimeout(
+    getStoredItem<unknown>(STORAGE_KEYS.DRIVE_PUBKEY_CACHE, null),
+    CACHE_IO_TIMEOUT_MS,
+    null,
+  );
+
+  if (
+    stored &&
+    typeof stored === "object" &&
+    !Array.isArray(stored) &&
+    (stored as { pubkey?: string }).pubkey === identityPubkey &&
+    Array.isArray((stored as { drivePubkeys?: unknown }).drivePubkeys)
+  ) {
+    return (stored as { drivePubkeys: unknown[] }).drivePubkeys.filter(
+      (p): p is string => typeof p === "string",
+    );
+  }
+
+  return [];
+}
+
 /**
- * Decrypt a single Drive Key payload (array-of-tags form) into its secret hex.
- * Returns null if the payload is malformed; throws if the signer itself fails.
+ * Decrypt a single Drive Key payload (NIP object form: {"encryptionKey": hex})
+ * into its secret hex. Returns null if the payload is malformed; throws if the
+ * signer itself fails.
  */
 async function decryptDriveKeyPayload(
   encryptedContent: string,
@@ -132,22 +179,17 @@ async function decryptDriveKeyPayload(
 
   const json = await signer.nip44Decrypt(pubkey, encryptedContent);
 
-  let tags: unknown;
+  let parsed: unknown;
   try {
-    tags = JSON.parse(json);
+    parsed = JSON.parse(json);
   } catch {
     return null;
   }
 
-  if (!Array.isArray(tags)) return null;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
 
-  const encKeyTag = tags.find(
-    (t): t is string[] =>
-      Array.isArray(t) && t.length >= 2 && t[0] === "encryptionKey",
-  );
-
-  const secretKeyHex = encKeyTag?.[1];
-  if (!secretKeyHex || !HEX_64.test(secretKeyHex)) return null;
+  const secretKeyHex = (parsed as { encryptionKey?: unknown }).encryptionKey;
+  if (typeof secretKeyHex !== "string" || !HEX_64.test(secretKeyHex)) return null;
 
   return secretKeyHex;
 }
@@ -237,10 +279,13 @@ function sortNewestFirst<T extends { created_at: number }>(items: T[]): T[] {
  *      relays, as long as the signer (e.g. the local nsec) is available.
  *   2. Reconcile with relays. If we already had cached keys this runs in the
  *      background so it never blocks startup; otherwise we await it.
- *   3. Only when we have NO cached keys AND relays are reachable AND report
- *      nothing do we treat this as a first-time user and offer to create a key.
- *      Key events that exist but can't be decrypted are a signer/auth problem,
- *      never a reason to overwrite the key.
+ *   3. We treat this as a first-time user (and offer to create a key) both
+ *      when relays report nothing, and when every event we found was in an
+ *      unsupported/legacy format — anything that decrypted but didn't match
+ *      our expected shape. We only hard-block WITHOUT offering to overwrite
+ *      when the signer itself genuinely failed to decrypt something (an
+ *      auth/extension problem), since that's the one case where a key might
+ *      actually still be there and recoverable.
  */
 export async function getDriveKeyring(): Promise<DriveKeyEntry[]> {
   // Fast path: in-memory cache, but only for the SAME user still signed in.
@@ -271,10 +316,7 @@ export async function getDriveKeyring(): Promise<DriveKeyEntry[]> {
     }
     seenSecrets.add(secretKeyHex);
     secretTimestamps.set(secretKeyHex, createdAt);
-    keyring.push({
-      secretKeyHex,
-      conversationKey: buildConversationKey(secretKeyHex),
-    });
+    keyring.push({ secretKeyHex, ...deriveKeyMaterial(secretKeyHex) });
     return true;
   };
 
@@ -284,11 +326,21 @@ export async function getDriveKeyring(): Promise<DriveKeyEntry[]> {
     collectedPayloads.push({ content, created_at: createdAt });
   };
 
+  // Set only when the signer itself fails (auth/extension problem) — as
+  // opposed to decryptDriveKeyPayload returning null for a payload that
+  // decrypted fine but doesn't match our expected shape (e.g. an event
+  // published in an unsupported/legacy format). Only the former should ever
+  // block first-time-user handling below; the latter must be treated the
+  // same as "no usable key found" so a stale/incompatible event can't
+  // permanently strand the app.
+  let sawGenuineDecryptError = false;
+
   const tryDecrypt = async (content: string): Promise<string | null> => {
     try {
       return await decryptDriveKeyPayload(content, signer, pubkey);
     } catch (e) {
       console.warn("[DriveKey] Failed to decrypt a Drive Key payload", e);
+      sawGenuineDecryptError = true;
       return null;
     }
   };
@@ -308,6 +360,18 @@ export async function getDriveKeyring(): Promise<DriveKeyEntry[]> {
         (secretTimestamps.get(a.secretKeyHex) ?? 0),
     );
     activeSecretKeyHex = keyring[0]?.secretKeyHex ?? null;
+
+    // Persist the (public, non-sensitive) drive pubkeys so a cold start can
+    // declare the file-index author filter immediately, before the signer has
+    // decrypted anything. This runs on every path (unlike persistCache, which
+    // the warm-cache path never reaches), so it's the one place a cold-start
+    // reader can rely on being kept current.
+    if (keyring.length > 0) {
+      void saveCachedDrivePubkeys(
+        pubkey,
+        keyring.map((k) => k.publicKey),
+      );
+    }
   };
 
   // --- 1. Local cache ----------------------------------------------------
@@ -337,16 +401,17 @@ export async function getDriveKeyring(): Promise<DriveKeyEntry[]> {
 
     // --- 3. First-time-user handling ---
     if (keyring.length === 0) {
-      if (events.length > 0) {
-        // Key events exist but none could be decrypted — a signer/auth problem,
-        // NOT a missing key. Never offer to overwrite it.
+      if (events.length > 0 && sawGenuineDecryptError) {
+        // Key events exist and the signer itself failed on at least one —
+        // a signer/auth problem, NOT a missing key. Never offer to overwrite it.
         throw new Error(
           "Found your Drive Key but couldn't decrypt it. Please reopen the app and try again.",
         );
       }
 
-      // Relays were reachable (fetchDriveKeyEvents rejects otherwise) and had
-      // nothing: this is a genuine first-time user.
+      // Either no events exist, or every event we found decrypted fine but was
+      // in a format we no longer support — treat both the same as a genuine
+      // first-time user rather than hard-blocking on a stale/incompatible key.
       const confirmMessage =
         "Drive key not found in relays. Do you want to create a new key?\n\nWARNING: If you were using drive before and are creating a new key, all data encrypted using the old key may be lost.";
       if (!window.confirm(confirmMessage)) {
@@ -391,21 +456,23 @@ export async function getDriveConversationKeys(): Promise<Uint8Array[]> {
 }
 
 /**
- * The conversation key for the *active* (newest) Drive Key — used to encrypt
- * new file metadata so all fresh uploads share one consistent key.
+ * The full active Drive Key entry (secret, pubkey, conversation key), resolved
+ * exactly once. fileIndex.ts uses this rather than separately resolving the
+ * conversation key and the secret, because each independent lookup re-resolves
+ * "the active key", and a background syncWithRelays() can reassign the active
+ * key between two such calls — producing content encrypted under one key but
+ * authored (signed) by another.
  */
-export async function getDriveConversationKey(): Promise<Uint8Array> {
-  const active = await getActiveEntry();
-  return active.conversationKey;
+export async function getActiveDriveKey(): Promise<DriveKeyEntry> {
+  return getActiveEntry();
 }
 
-/**
- * The active Drive Key's secret, as raw hex. Needed by fileIndex.ts so it can
- * re-encrypt metadata with the same key during migration/edits.
- */
-export async function getActiveDriveKeySecret(): Promise<string> {
-  const active = await getActiveEntry();
-  return active.secretKeyHex;
+/** The pubkeys of every Drive Key the user has ever published — the file index
+ *  read filter subscribes to all of them, since older files may still carry an
+ *  older (rotated) key's pubkey as their event author. */
+export async function getDriveKeyPubkeys(): Promise<string[]> {
+  const keyring = await getDriveKeyring();
+  return keyring.map((entry) => entry.publicKey);
 }
 
 async function getActiveEntry(): Promise<DriveKeyEntry> {
@@ -436,8 +503,8 @@ async function initializeDriveKey(
   const secretKey = generateSecretKey();
   const secretKeyHex = bytesToHex(secretKey);
 
-  // Payload format matches the spec: array-of-tags.
-  const payload = JSON.stringify([["encryptionKey", secretKeyHex]]);
+  // Payload format matches the NIP: a JSON object, not array-of-tags.
+  const payload = JSON.stringify({ encryptionKey: secretKeyHex });
 
   // Encrypt the payload to the user themselves using their Main Identity Signer.
   const encryptedContent = await signer.nip44Encrypt(pubkey, payload);
@@ -466,10 +533,7 @@ async function initializeDriveKey(
   );
 
   return {
-    entry: {
-      secretKeyHex,
-      conversationKey: buildConversationKey(secretKeyHex),
-    },
+    entry: { secretKeyHex, ...deriveKeyMaterial(secretKeyHex) },
     encryptedContent,
     created_at,
   };

@@ -6,6 +6,7 @@ import { UploadZone } from '../Upload/UploadZone';
 import { SearchIcon, GridViewIcon, ListViewIcon, FolderIcon } from '../icons/Icons';
 
 import { isDirectChildFolder, getFolderName, getFolderItemCount } from '../../utils/folder';
+import { isLegacyFile } from '../../types/metadata';
 import { type SortKey, SORT_LABEL } from '../../utils/constants';
 import { FILE_HASH_MIME } from '../../utils/constants';
 
@@ -15,8 +16,7 @@ export function FileList() {
     folders,
     currentFolder,
     setCurrentFolder,
-    loading,
-    hasHydratedIndex,
+    keyReady,
     deleteFiles,
     moveFiles,
   } = useFileIndex();
@@ -62,11 +62,11 @@ export function FileList() {
     });
   }, [files, currentFolder, normalizedQuery, sortKey]);
   const currentFileHashes = useMemo(
-    () => new Set(currentFiles.map((file) => file.hash)),
+    () => new Set(currentFiles.map((file) => file.id)),
     [currentFiles]
   );
   const selectedFiles = useMemo(
-    () => currentFiles.filter((file) => selectedFileHashes.has(file.hash)),
+    () => currentFiles.filter((file) => selectedFileHashes.has(file.id)),
     [currentFiles, selectedFileHashes]
   );
   const selectedCount = selectedFiles.length;
@@ -112,7 +112,12 @@ export function FileList() {
       if (allVisibleSelected) {
         return new Set();
       }
-      return new Set(currentFiles.map((file) => file.hash));
+      // Legacy files (pre-dating the random id) all share the same undefined
+      // id — including them here would collapse them into one shared "select
+      // all" entry and let bulk actions touch the wrong files.
+      return new Set(
+        currentFiles.filter((file) => !isLegacyFile(file)).map((file) => file.id),
+      );
     });
   };
 
@@ -132,7 +137,7 @@ export function FileList() {
     setBulkAction("delete");
 
     try {
-      await deleteFiles(selectedFiles.map((file) => file.hash));
+      await deleteFiles(selectedFiles.map((file) => file.id));
       setSelectedFileHashes(new Set());
       setShowDeleteDialog(false);
     } catch (e) {
@@ -156,7 +161,7 @@ export function FileList() {
     setBulkAction("move");
 
     try {
-      await moveFiles(selectedFiles.map((file) => file.hash), folder);
+      await moveFiles(selectedFiles.map((file) => file.id), folder);
       setSelectedFileHashes(new Set());
       setShowMoveDialog(false);
     } catch (e) {
@@ -225,7 +230,7 @@ export function FileList() {
           </p>
           <ul className="bulk-delete-list">
             {selectedFiles.map((file) => (
-              <li key={file.hash} className="bulk-delete-list-item">
+              <li key={file.id} className="bulk-delete-list-item">
                 <span className="bulk-delete-file-name" title={file.name}>
                   {file.name}
                 </span>
@@ -255,7 +260,10 @@ export function FileList() {
     </div>
   );
 
-  if (loading || !hasHydratedIndex) {
+  // Only the Drive Key needs to be ready to start rendering — files then
+  // populate progressively via the standing file-index subscription as each
+  // one decrypts, rather than blocking behind the full replay (hasHydratedIndex).
+  if (!keyReady) {
     return (
       <div className="loading-container">
         <div className="loading-state">Hold tight while we are fetching your files...</div>
@@ -382,13 +390,26 @@ export function FileList() {
               );
             })}
 
-            {currentFiles.map((file) => (
+            {currentFiles.map((file, index) => (
               <FileCard
-                key={file.hash}
+                // Legacy files (pre-dating the random id) all have id === undefined —
+                // falling back to `file.id` alone would give every such row the exact
+                // same React key, which is invalid and can destabilize reconciliation
+                // for the whole list (React warns and may reuse DOM nodes across
+                // unrelated rows when siblings share a key).
+                key={file.id ?? `legacy-${index}`}
                 file={file}
                 viewMode={viewMode}
-                selected={selectedFileHashes.has(file.hash)}
+                selected={selectedFileHashes.has(file.id)}
                 onToggleSelection={toggleFileSelection}
+                // If this card is part of a multi-selection, dragging it should move
+                // the WHOLE selection, matching standard file-manager behavior — not
+                // just the one card that happened to receive the native dragstart.
+                dragIds={
+                  selectedFileHashes.has(file.id) && selectedFileHashes.size > 1
+                    ? Array.from(selectedFileHashes)
+                    : [file.id]
+                }
               />
             ))}
           </div>

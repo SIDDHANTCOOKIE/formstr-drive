@@ -9,14 +9,16 @@ import { downloadFileStreaming } from "../services/downloadFile";
 import { downloadFileToDownloads, ensureNotificationPermission } from "../native/driveManifest";
 import { isAndroidPlatform } from "../utils/platform";
 import { isAbortError } from "../utils/abortError";
-import type { FileMetadata } from "../types/metadata";
+import { hasChunkServerOverride, type FileMetadata } from "../types/metadata";
 import { uploadDriver } from "./uploadDriver";
 
-// Upload MUST stay at 1: each upload calls the Nostr signer (NIP-07 extension /
-// Amber), which cannot service concurrent approval prompts — two parallel
-// uploads would race two prompts and one would be silently dropped. Do not
-// raise this. Download 2 matches PREFETCH_CONCURRENCY so peak memory stays
-// bounded at ~4 chunks.
+// Upload MUST stay at 1: each upload calls the Nostr signer once, for the
+// Blossom auth event (NIP-07 extension / Amber) — file-index metadata is
+// signed locally with the Drive Key and costs no prompt. The signer still
+// cannot service concurrent approval prompts, so two parallel uploads would
+// race two prompts and one would be silently dropped. Do not raise this.
+// Download 2 matches PREFETCH_CONCURRENCY so peak memory stays bounded at
+// ~4 chunks.
 const CONCURRENCY = {
   upload: 1,
   download: 2,
@@ -40,6 +42,10 @@ interface UploadJob {
   kind: "upload";
   file: File;
   server: string;
+  // Fallback candidates, primary first — always includes at least `server`.
+  // See uploadFile.ts's uploadChunkWithRetry for how a chunk falls through
+  // the list if the primary server's PUT fails after same-server retries.
+  candidateServers: string[];
   targetFolder: string;
   callbacks?: UploadCallbacks;
 }
@@ -158,7 +164,14 @@ async function runDownload(id: string, job: DownloadJob) {
     });
   };
 
-  if (isAndroidPlatform) {
+  // The native Android downloader only knows one server per file — a chunk
+  // that fell back to a different server during upload can't be fetched by
+  // it. Fall back to the JS download path (which resolves per-chunk servers
+  // via resolveChunks) for any such file, even on Android.
+  const canUseNativeDownload =
+    isAndroidPlatform && !hasChunkServerOverride(file.chunks, file.server);
+
+  if (canUseNativeDownload) {
     await ensureNotificationPermission();
     updateTransfer(id, { progress: 0, stage: "Downloading..." });
     const result = await downloadFileToDownloads(
@@ -200,7 +213,7 @@ async function runUpload(id: string, job: UploadJob): Promise<FileMetadata> {
     });
   };
 
-  return uploadDriver(job.file, job.server, job.targetFolder, signal, onProgress);
+  return uploadDriver(job.file, job.candidateServers, job.targetFolder, signal, onProgress);
 }
 
 // Removes a terminal (completed/failed/cancelled) entry so its id can be
@@ -265,7 +278,7 @@ export function dismissTransfer(id: string) {
 /** Enqueue a download. Returns true if it was accepted, false if an identical
  *  transfer is already active (deduped). */
 export function queueDownload(file: FileMetadata): boolean {
-  const id = file.hash;
+  const id = file.id;
   if (!resetIfTerminal(id)) return false;
 
   jobs.set(id, { kind: "download", file });
@@ -274,7 +287,7 @@ export function queueDownload(file: FileMetadata): boolean {
     type: "download",
     status: "pending",
     progress: 0,
-    fileDetails: { name: file.name, size: file.size, hash: file.hash, server: file.server },
+    fileDetails: { name: file.name, size: file.size, hash: file.id, server: file.server },
     abortController: new AbortController(),
   });
   triggerQueueProcessing();
@@ -283,17 +296,22 @@ export function queueDownload(file: FileMetadata): boolean {
 
 /** Enqueue an upload. Returns true if accepted, false if an identical transfer
  *  is already active (deduped). The id includes the target folder so the same
- *  file can be uploaded to two folders. */
+ *  file can be uploaded to two folders.
+ *
+ *  `candidateServers` defaults to just `[server]` (today's behavior, no
+ *  fallback) when omitted — callers that want automatic multi-server fallback
+ *  on a failed chunk pass the full candidate list, primary first. */
 export function queueUpload(
   file: File,
   server: string,
   targetFolder: string,
+  candidateServers: string[] = [server],
   callbacks?: UploadCallbacks,
 ): boolean {
   const id = `${file.name}:${file.size}:${file.lastModified}:${targetFolder}`;
   if (!resetIfTerminal(id)) return false;
 
-  jobs.set(id, { kind: "upload", file, server, targetFolder, callbacks });
+  jobs.set(id, { kind: "upload", file, server, candidateServers, targetFolder, callbacks });
   addTransfer({
     id,
     type: "upload",
