@@ -37,7 +37,11 @@ import { getUploadCandidateServers } from "./BlossomServerProvider";
 import { isAndroidPlatform } from "../utils/platform";
 import { queueUpload } from "../transfers/transferQueue";
 import { getTransfers } from "../transfers/transferStore";
-import { adoptActiveNativeDownloads, startNativeEventBridge } from "../transfers/nativeAdoption";
+import {
+  adoptActiveNativeDownloads,
+  adoptActiveNativeUploads,
+  startNativeEventBridge,
+} from "../transfers/nativeAdoption";
 
 // Re-export type if needed anywhere else
 export type { FileMetadata };
@@ -106,18 +110,21 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
   }, [files, customFolders]);
 
   // Warn before the tab/window closes while transfers are still in flight and
-  // would be lost. A native download runs in a foreground service and survives,
-  // so it needs no warning; a native upload runs in the webview (background
-  // upload is disabled) and DOES die — so the rule is: warn unless every active
-  // transfer is a native download. On web nothing survives a close, so any
-  // active transfer warns.
+  // would be lost. On Android a download always runs in a foreground service
+  // and survives; an upload survives only once it has handed off to the upload
+  // service (`survivesAppClose`) — before that it's still encrypting in the
+  // WebView and dies with it. On web nothing survives a close, so any active
+  // transfer warns.
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       const active = getTransfers().filter(
         (t) => t.status === "running" || t.status === "pending",
       );
       if (active.length === 0) return;
-      const allSurvive = active.every((t) => t.type === "download" && isAndroidPlatform);
+      const allSurvive = active.every(
+        (t) =>
+          isAndroidPlatform && (t.type === "download" || t.survivesAppClose === true),
+      );
       if (allSurvive) return;
       e.preventDefault();
       e.returnValue = "";
@@ -156,8 +163,8 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
     }
   }, [isSignedIn, pubkey, restoring]);
 
-  // Android only: re-adopt native downloads that outlived the JS context (app
-  // killed/relaunched mid-download) so they reappear as cancellable rows, and
+  // Android only: re-adopt native transfers that outlived the JS context (app
+  // killed/relaunched mid-transfer) so they reappear as cancellable rows, and
   // keep a single app-lifetime listener routing their progress/completion.
   useEffect(() => {
     if (!isAndroidPlatform) return;
@@ -167,10 +174,12 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
       teardown = fn;
     });
     void adoptActiveNativeDownloads();
+    void adoptActiveNativeUploads();
 
     const onVisible = () => {
       if (document.visibilityState === "visible") {
         void adoptActiveNativeDownloads();
+        void adoptActiveNativeUploads();
       }
     };
     document.addEventListener("visibilitychange", onVisible);

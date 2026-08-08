@@ -2,6 +2,7 @@ import { dataLayer, type PublishResult } from "@formstr/local-relay";
 import type { Event } from "nostr-tools";
 import { signerManager } from "../signer/manager";
 import { getStoredItem, setStoredItem, removeStoredItem, STORAGE_KEYS } from "../utils/persistence";
+import { BlossomClient } from "../blossom";
 
 // The @formstr/local-relay worker already retries `timeout`/`failed` relay
 // outcomes durably across restarts (its own DeliveryOutbox). This module only
@@ -19,6 +20,17 @@ interface OutboxEntry {
   attempts: number;
   lastError?: string;
   label?: string;
+  /**
+   * Set only by the Android background-upload path, which queues its primary
+   * metadata variant BEFORE the blobs are even in flight — insurance against
+   * the app dying while the native service runs and its own relay-publish
+   * attempt failing with no JS around to catch it. That queued entry is
+   * indistinguishable from one written before a SINGLE byte uploaded (app
+   * killed seconds into staging), so it must never be trusted blindly: before
+   * this entry is ever auto-published, the drain confirms the blob it
+   * describes actually exists on the server. See drainMetadataOutbox.
+   */
+  verifyBlob?: { server: string; hash: string };
 }
 
 const MAX_ENTRIES = 200;
@@ -119,6 +131,40 @@ export async function enqueueMetadataEvent(event: Event, label?: string): Promis
   });
 }
 
+/**
+ * Drops any queued entry for this event's coordinate. Used when the event has
+ * definitively landed by some other route — e.g. the Android background upload
+ * service published it itself, so the queued copy is redundant.
+ */
+export async function dequeueMetadataEvent(event: Event): Promise<void> {
+  const owner = storageKeyOwner();
+  if (!owner) return;
+  await removeByCoord(owner, coordFor(event));
+}
+
+/**
+ * Replaces the queued entry for this coordinate with `event`, ignoring
+ * created_at. {@link enqueueMetadataEvent} keeps the newer of two events, but
+ * the background upload path pre-signs one metadata variant per candidate
+ * server within the same second — they tie on created_at, so choosing between
+ * them has to be explicit rather than timestamp-based.
+ */
+export async function replaceQueuedMetadataEvent(
+  event: Event,
+  label?: string,
+  verifyBlob?: { server: string; hash: string },
+): Promise<void> {
+  const owner = storageKeyOwner();
+  if (!owner) return;
+
+  await withIoLock(async () => {
+    const coord = coordFor(event);
+    const entries = pruneStale(await loadEntries(owner)).filter((e) => e.coord !== coord);
+    entries.push({ event, coord, queuedAt: Date.now(), attempts: 0, label, verifyBlob });
+    await persistEntries(owner, entries);
+  });
+}
+
 async function removeByCoord(owner: string, coord: string): Promise<void> {
   await withIoLock(async () => {
     const entries = await loadEntries(owner);
@@ -169,6 +215,44 @@ export async function publishAndDequeue(event: Event): Promise<PublishResult> {
   throw new Error(`No relay accepted the metadata event — ${reasons}`);
 }
 
+/**
+ * Publishes a batch of already-queued events one at a time, `intervalMs`
+ * apart (default 1000 — see the rate-limit note on {@link drainMetadataOutbox}),
+ * via {@link publishAndDequeue} so the same benign-duplicate / rate-limit
+ * classification applies to each attempt rather than being reimplemented
+ * here. Never throws: a failed publish is swallowed and left queued for the
+ * next background {@link drainMetadataOutbox} to retry. Use this for a batch
+ * whose FIRST member already landed synchronously via a direct
+ * `publishAndDequeue` call (e.g. a folder share's container event) — this
+ * helper is for the rest of the batch, which the caller doesn't need to
+ * block on.
+ */
+export async function publishQueuedPaced(
+  events: Event[],
+  opts?: { intervalMs?: number; onProgress?: (done: number, total: number) => void },
+): Promise<{ published: number; failed: number }> {
+  const intervalMs = opts?.intervalMs ?? 1000;
+  let published = 0;
+  let failed = 0;
+
+  for (let i = 0; i < events.length; i++) {
+    try {
+      await publishAndDequeue(events[i]);
+      published++;
+    } catch (e) {
+      failed++;
+      console.warn("[MetadataOutbox] Paced publish failed, left queued for background drain", e);
+    }
+    opts?.onProgress?.(i + 1, events.length);
+
+    if (i < events.length - 1) {
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+  }
+
+  return { published, failed };
+}
+
 /** Best-effort drain of every queued entry, paced to avoid the rate limiting
  *  observed under burst publishing (~90% rejected at 10/s on damus.io; a
  *  fresh key's single publish is unaffected, so ~1/s is a safe, conservative
@@ -184,6 +268,23 @@ export async function drainMetadataOutbox(): Promise<{ published: number; remain
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
     try {
+      if (entry.verifyBlob) {
+        const blobExists = await new BlossomClient(entry.verifyBlob.server).exists(
+          entry.verifyBlob.hash,
+        );
+        if (!blobExists) {
+          // Confirmed absent: the upload this entry describes never actually
+          // landed (or was cancelled) — publishing it would announce a file
+          // nobody can ever download. Drop it rather than keep retrying.
+          console.warn(
+            `[MetadataOutbox] Dropping queued entry for "${entry.label ?? entry.coord}" — ` +
+              `its blob isn't on ${entry.verifyBlob.server}, the upload never completed`,
+          );
+          continue;
+        }
+        // Blob confirmed present — safe to publish. Fall through.
+      }
+
       const result = await dataLayer.publishEvent(entry.event);
 
       if (result.ok) {

@@ -39,7 +39,13 @@ export async function uploadDriver(
       return null;
     });
 
-    onProgress({ stage: "Encrypting & Uploading...", progress: 0 });
+    // Only the very first tick before uploadFile()'s own stage reporting takes
+    // over ("Encrypting...", "Uploading...", "Connecting...", "Retrying...",
+    // etc. — see src/services/uploadFile.ts). A single merged label here used
+    // to be the *only* label shown for the network phase, which is why a
+    // stalled connection (CORS block, dropped socket) looked identical to
+    // ongoing encryption for the whole retry cascade.
+    onProgress({ stage: "Encrypting...", progress: 0 });
     const privateKeyHex = bytesToHex(generateSecretKey());
 
     const { hashes, previewHash, chunkServers, unencryptedFileHash } = await chunkedUploadFile(

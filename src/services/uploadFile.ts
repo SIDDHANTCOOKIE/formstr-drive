@@ -1,8 +1,9 @@
 import { sha256 } from "@noble/hashes/sha256";
 import { bytesToHex } from "nostr-tools/utils";
-import { BlossomClient, BlossomError } from "../blossom";
+import { BlossomClient } from "../blossom";
 import { aesGcmEncryptBytes, deriveConversationKeyFromHex, encryptFileWithExistingKey } from "../crypto";
 import { createAuthEvent } from "../auth";
+import { describeAllServersFailed, isPermanentFailure } from "./uploadErrors";
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
@@ -79,6 +80,10 @@ function throwIfAborted(signal?: AbortSignal): void {
 export interface PreparedUpload {
   chunkHashes: string[];
   totalSize: number;
+  /** SHA-256 hex of the original (plaintext) file bytes — same field
+   *  {@link uploadFile} produces, so a prepared (background) upload records
+   *  the same NIP-FS integrity hash a foreground one does. */
+  unencryptedFileHash: string;
   previewHash?: string;
   // In-memory ciphertext (only populated when no onBlob sink is supplied).
   chunkBlobs?: Uint8Array[];
@@ -98,13 +103,17 @@ export interface PreparedUpload {
  * native storage) and then dropped, so peak memory stays around one chunk
  * instead of the whole file. Its return value is collected into chunkRefs /
  * previewRef. Without `onBlob`, blobs are retained in chunkBlobs/previewBlob.
+ *
+ * `preview` may be a promise: it is awaited only after the chunk loop, so
+ * preview generation overlaps chunk encryption exactly as it does in
+ * {@link uploadFile}.
  */
 export async function prepareUpload(
   file: File,
   encryptionKeyHex: string,
   signal?: AbortSignal,
   onProgress?: (info: UploadProgressInfo) => void,
-  preview?: Uint8Array | null,
+  preview?: Uint8Array | null | Promise<Uint8Array | null>,
   onBlob?: (index: number, bytes: Uint8Array) => Promise<string>,
 ): Promise<PreparedUpload> {
   const convKey = deriveConversationKeyFromHex(encryptionKeyHex);
@@ -113,6 +122,9 @@ export async function prepareUpload(
   const chunkHashes: string[] = [];
   const chunkBlobs: Uint8Array[] = [];
   const chunkRefs: string[] = [];
+  // Streaming plaintext digest, updated per chunk before encryption — same
+  // approach (and same resulting hash) as uploadFile's plaintextHasher.
+  const plaintextHasher = sha256.create();
 
   for (let i = 0; i < numChunks; i++) {
     throwIfAborted(signal);
@@ -126,6 +138,7 @@ export async function prepareUpload(
     const start = i * CHUNK_SIZE;
     const end = Math.min(start + CHUNK_SIZE, totalSize);
     const bytes = new Uint8Array(await file.slice(start, end).arrayBuffer());
+    plaintextHasher.update(bytes);
     const encBytes = await aesGcmEncryptBytes(bytes, convKey);
 
     const hashBuffer = await crypto.subtle.digest("SHA-256", encBytes as unknown as BufferSource);
@@ -139,16 +152,21 @@ export async function prepareUpload(
     }
   }
 
-  const result: PreparedUpload = { chunkHashes, totalSize };
+  const result: PreparedUpload = {
+    chunkHashes,
+    totalSize,
+    unencryptedFileHash: bytesToHex(plaintextHasher.digest()),
+  };
   if (onBlob) {
     result.chunkRefs = chunkRefs;
   } else {
     result.chunkBlobs = chunkBlobs;
   }
 
-  if (preview) {
+  const previewBytesIn = await preview;
+  if (previewBytesIn) {
     throwIfAborted(signal);
-    const encryptedPreview = await encryptFileWithExistingKey(preview, encryptionKeyHex);
+    const encryptedPreview = await encryptFileWithExistingKey(previewBytesIn, encryptionKeyHex);
     const previewBytes = new TextEncoder().encode(encryptedPreview);
     const hashBuffer = await crypto.subtle.digest("SHA-256", previewBytes as unknown as BufferSource);
     result.previewHash = toHexHash(hashBuffer);
@@ -160,31 +178,6 @@ export async function prepareUpload(
   }
 
   return result;
-}
-
-/**
- * Aggregate error for when every fallback candidate is exhausted. Deliberately
- * doesn't assert "CORS" as the cause — a browser-level network failure can't
- * be told apart from an actual CORS block, a dropped connection, or a
- * transient outage (see src/blossom.ts's isCorsError comment).
- */
-function allServersFailedError(servers: string[]): Error {
-  return new Error(
-    `Could not upload to any Blossom server (tried ${servers.join(", ")}). This is usually a temporary connectivity issue — try again in a moment.`,
-  );
-}
-
-// Status codes a Blossom server uses for a rejection that retrying can never
-// fix: 415 (content-sniffed as an unsupported media type — proven true for
-// e.g. blossom.primal.net rejecting non-media binary regardless of declared
-// Content-Type) and 401/403 (auth rejected outright, e.g. an allowlist that
-// doesn't include this pubkey). Retrying these wastes 3 requests per chunk for
-// a foregone conclusion; treat them as an instant "this server is dead for
-// the rest of this upload" signal instead.
-const PERMANENT_FAILURE_STATUS = new Set([401, 403, 415]);
-
-function isPermanentFailure(err: unknown): boolean {
-  return err instanceof BlossomError && err.status !== undefined && PERMANENT_FAILURE_STATUS.has(err.status);
 }
 
 /**
@@ -221,34 +214,45 @@ async function uploadChunkWithRetry(
   signal: AbortSignal | undefined,
   deadServers: Set<string>,
 ): Promise<string | undefined> {
-  let lastErr: unknown;
-  let anyAttempted = false;
+  const failures: { server: string; error: unknown }[] = [];
 
   for (let s = 0; s < servers.length; s++) {
     const server = servers[s];
     if (deadServers.has(server)) continue;
 
-    anyAttempted = true;
     const client = new BlossomClient(server);
     let retries = 3;
 
     while (retries > 0) {
       throwIfAborted(signal);
       try {
-        await client.upload(encBytes, authHeader, (percent) => {
-          onProgress?.({
-            stage: "Uploading...",
-            progress: Math.round(startProgress + (percent / 100) * chunkWeight),
-            currentChunk: chunkIndex + 1,
-            totalChunks: numChunks,
-          });
-        }, signal);
+        await client.upload(
+          encBytes,
+          authHeader,
+          (percent) => {
+            onProgress?.({
+              stage: "Uploading...",
+              progress: Math.round(startProgress + (percent / 100) * chunkWeight),
+              currentChunk: chunkIndex + 1,
+              totalChunks: numChunks,
+            });
+          },
+          signal,
+          (stage) => {
+            onProgress?.({
+              stage: stage === "connecting" ? "Connecting..." : `Still trying to reach ${server}...`,
+              progress: Math.round(startProgress),
+              currentChunk: chunkIndex + 1,
+              totalChunks: numChunks,
+            });
+          },
+        );
         return s === 0 ? undefined : server;
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") {
           throw err;
         }
-        lastErr = err;
+        failures.push({ server, error: err });
         if (isPermanentFailure(err)) {
           retries = 0;
           break;
@@ -270,17 +274,16 @@ async function uploadChunkWithRetry(
     deadServers.add(server);
   }
 
-  if (!anyAttempted) {
-    // Every candidate was already known-dead from an earlier chunk.
-    throw allServersFailedError(servers);
-  }
-  throw servers.length > 1 ? allServersFailedError(servers) : lastErr;
+  throw describeAllServersFailed(failures.length > 0 ? failures : servers.map((server) => ({ server, error: undefined })));
 }
 
 /**
  * Same retry+fallback+sticky-dead-server behavior as uploadChunkWithRetry,
- * for the un-chunked single-blob case — no per-byte progress or "Retrying..."
- * stage, mirroring that path's existing (lack of) progress granularity.
+ * for the un-chunked single-blob case. Shares the exact same progress/stage
+ * contract — "Uploading...", "Connecting...", "Still trying...", and
+ * "Retrying..." — so a small (single-chunk) file gets the same live feedback
+ * a large (multi-chunk) one does, instead of sitting frozen on whatever stage
+ * preceded the call for the whole retry cascade.
  */
 async function uploadBlobWithFallback(
   servers: string[],
@@ -288,34 +291,52 @@ async function uploadBlobWithFallback(
   authHeader: string,
   signal: AbortSignal | undefined,
   deadServers: Set<string>,
+  onProgress?: (info: UploadProgressInfo) => void,
+  startProgress = 20,
+  weight = 78,
 ): Promise<string | undefined> {
-  let lastErr: unknown;
-  let anyAttempted = false;
+  const failures: { server: string; error: unknown }[] = [];
 
   for (let s = 0; s < servers.length; s++) {
     const server = servers[s];
     if (deadServers.has(server)) continue;
 
-    anyAttempted = true;
     const client = new BlossomClient(server);
     let retries = 3;
 
     while (retries > 0) {
       throwIfAborted(signal);
       try {
-        await client.upload(blob, authHeader, undefined, signal);
+        await client.upload(
+          blob,
+          authHeader,
+          (percent) => {
+            onProgress?.({
+              stage: "Uploading...",
+              progress: Math.round(startProgress + (percent / 100) * weight),
+            });
+          },
+          signal,
+          (stage) => {
+            onProgress?.({
+              stage: stage === "connecting" ? "Connecting..." : `Still trying to reach ${server}...`,
+              progress: Math.round(startProgress),
+            });
+          },
+        );
         return s === 0 ? undefined : server;
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") {
           throw err;
         }
-        lastErr = err;
+        failures.push({ server, error: err });
         if (isPermanentFailure(err)) {
           retries = 0;
           break;
         }
         retries--;
         if (retries > 0) {
+          onProgress?.({ stage: "Retrying...", progress: Math.round(startProgress) });
           await sleep(3000);
         }
       }
@@ -323,10 +344,7 @@ async function uploadBlobWithFallback(
     deadServers.add(server);
   }
 
-  if (!anyAttempted) {
-    throw allServersFailedError(servers);
-  }
-  throw servers.length > 1 ? allServersFailedError(servers) : lastErr;
+  throw describeAllServersFailed(failures.length > 0 ? failures : servers.map((server) => ({ server, error: undefined })));
 }
 
 /**
@@ -440,7 +458,7 @@ export async function uploadFile(
     throwIfAborted(signal);
     onProgress?.({ stage: "Waiting for signature approval...", progress: 20, currentChunk: 1, totalChunks: 1 });
     const { authHeader, previewHash, encryptedPreview } = await finalizePreviewAuth([hash]);
-    const usedServer = await uploadBlobWithFallback(servers, encBytes, authHeader, signal, deadServers);
+    const usedServer = await uploadBlobWithFallback(servers, encBytes, authHeader, signal, deadServers, onProgress);
     const previewUploaded = await uploadPreviewIfPresent(encryptedPreview, authHeader);
     onProgress?.({ stage: "Upload complete", progress: 100, currentChunk: 1, totalChunks: 1 });
     return {

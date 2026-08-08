@@ -3,12 +3,16 @@ import { useFileIndex } from '../../hooks/useFileContext';
 import { useToast } from '../../hooks/useToast';
 import { FileCard } from "./FileCard";
 import { UploadZone } from '../Upload/UploadZone';
-import { SearchIcon, GridViewIcon, ListViewIcon, FolderIcon } from '../icons/Icons';
+import { SearchIcon, GridViewIcon, ListViewIcon, FolderIcon, ShareIcon } from '../icons/Icons';
 
-import { isDirectChildFolder, getFolderName, getFolderItemCount } from '../../utils/folder';
+import { isDirectChildFolder, getFolderName, getFolderItemCount, filesUnderFolder } from '../../utils/folder';
 import { isLegacyFile } from '../../types/metadata';
 import { type SortKey, SORT_LABEL } from '../../utils/constants';
 import { FILE_HASH_MIME } from '../../utils/constants';
+import { PullToRefresh } from '../ui/PullToRefresh';
+import { isAndroidPlatform } from '../../utils/platform';
+import { ShareModal } from './ShareModal';
+import { useShares } from '../../context/SharesProvider';
 
 export function FileList() {
   const {
@@ -19,8 +23,10 @@ export function FileList() {
     keyReady,
     deleteFiles,
     moveFiles,
+    refresh,
   } = useFileIndex();
   const toast = useToast();
+  const { isFolderShared } = useShares();
   const [searchQuery, setSearchQuery] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("newest");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
@@ -29,8 +35,19 @@ export function FileList() {
   const [showMoveDialog, setShowMoveDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
+  const [shareFolderPath, setShareFolderPath] = useState<string | null>(null);
   const normalizedQuery = searchQuery.trim().toLowerCase();
   const isGridView = viewMode === "grid";
+
+  const shareTarget = useMemo(() => {
+    if (!shareFolderPath) return null;
+    return {
+      mode: "folder" as const,
+      folderName: getFolderName(shareFolderPath),
+      path: shareFolderPath,
+      files: filesUnderFolder(files, shareFolderPath),
+    };
+  }, [shareFolderPath, files]);
 
   const currentFolders = useMemo(
     () =>
@@ -272,10 +289,9 @@ export function FileList() {
     );
   }
 
-  return (
-    <div className="file-list-container">
-      <div className="file-list-scroll" style={selectedCount > 0 ? { paddingBottom: 120 } : undefined}>
-        <UploadZone />
+  const scrollContent = (
+    <>
+      <UploadZone />
 
         <div className="file-list-toolbar">
           <div className="search-wrap">
@@ -350,9 +366,10 @@ export function FileList() {
               };
 
               return isGridView ? (
-                <button
+                <div
                   key={folderPath}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   className={`folder-tile${dragOverFolder === folderPath ? " drag-over" : ""}`}
                   onClick={() => setCurrentFolder(folderPath)}
                   title={`Open ${getFolderName(folderPath)}`}
@@ -367,11 +384,22 @@ export function FileList() {
                     </span>
                     <span className="folder-tile-meta">{itemsLabel}</span>
                   </div>
-                </button>
+                  <button
+                    className={`tile-action-btn folder-tile-share-btn${isFolderShared(folderPath) ? " is-shared" : ""}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShareFolderPath(folderPath);
+                    }}
+                    title={isFolderShared(folderPath) ? "Shared — click to manage" : "Share folder"}
+                  >
+                    <ShareIcon />
+                  </button>
+                </div>
               ) : (
-                <button
+                <div
                   key={folderPath}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   className={`folder-row${dragOverFolder === folderPath ? " drag-over" : ""}`}
                   onClick={() => setCurrentFolder(folderPath)}
                   title={`Open ${getFolderName(folderPath)}`}
@@ -386,7 +414,19 @@ export function FileList() {
                     </span>
                     <span className="folder-row-meta">{itemsLabel}</span>
                   </div>
-                </button>
+                  <div className="file-actions folder-row-actions">
+                    <button
+                      className={`action-btn${isFolderShared(folderPath) ? " is-shared" : ""}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShareFolderPath(folderPath);
+                      }}
+                      title={isFolderShared(folderPath) ? "Shared — click to manage" : "Share folder"}
+                    >
+                      <ShareIcon />
+                    </button>
+                  </div>
+                </div>
               );
             })}
 
@@ -414,7 +454,22 @@ export function FileList() {
             ))}
           </div>
         )}
-      </div>
+    </>
+  );
+
+  const scrollStyle = selectedCount > 0 ? { paddingBottom: 120 } : undefined;
+
+  return (
+    <div className="file-list-container">
+      {isAndroidPlatform ? (
+        <PullToRefresh className="file-list-scroll" style={scrollStyle} onRefresh={refresh}>
+          {scrollContent}
+        </PullToRefresh>
+      ) : (
+        <div className="file-list-scroll" style={scrollStyle}>
+          {scrollContent}
+        </div>
+      )}
 
       {selectedCount > 0 && (
         <div className="bulk-action-bar">
@@ -448,6 +503,9 @@ export function FileList() {
       )}
       {bulkDeleteDialog}
       {bulkMoveDialog}
+      {shareTarget && (
+        <ShareModal target={shareTarget} onClose={() => setShareFolderPath(null)} />
+      )}
     </div>
   );
 }

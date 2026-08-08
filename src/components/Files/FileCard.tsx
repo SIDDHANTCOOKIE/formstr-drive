@@ -8,8 +8,11 @@ import { detectMimeTypeFromMagicBytes, getFileIcon, MAX_PREVIEW_SIZE } from '../
 import { useToast } from '../../hooks/useToast';
 import { FILE_HASH_MIME } from '../../utils/constants';
 import { formatSize, formatDate, getHostname } from '../../utils/format';
-import { PreviewEyeIcon } from '../icons/Icons';
+import { PreviewEyeIcon, ShareIcon } from '../icons/Icons';
 import { queueDownload } from "../../transfers/transferQueue";
+import { canvasToBlobWithFallback } from "../../utils/canvas";
+import { ShareModal } from "./ShareModal";
+import { useShares } from "../../context/SharesProvider";
 
 interface FileCardProps {
   file: FileMetadata;
@@ -63,9 +66,7 @@ async function extractStaticFrame(blobUrl: string): Promise<string> {
   if (!ctx) throw new Error("Failed to get canvas 2D context");
   ctx.drawImage(img, 0, 0);
 
-  const blob = await new Promise<Blob>((resolve, reject) =>
-    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Canvas export failed"))), "image/webp", 0.8),
-  );
+  const blob = await canvasToBlobWithFallback(canvas, 0.8);
   return URL.createObjectURL(blob);
 }
 
@@ -115,11 +116,14 @@ export function FileCard({
   // since the context functions can only defend against a falsy hash, not
   // against this component handing them one in the first place.
   const isLegacy = isLegacyFile(file);
+  const { isFileShared } = useShares();
+  const isShared = !isLegacy && isFileShared(file.id);
   const [showMenu, setShowMenu] = useState(false);
   const [showMoveDialog, setShowMoveDialog] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [showPreview, setShowPreview] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
 
   const [previewloaded, setPreviewloaded] = useState(false);
   const [preview, setPreview] = useState<PreviewData | null>(null);
@@ -260,6 +264,16 @@ export function FileCard({
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Move failed");
     }
+  };
+
+  const handleShareClick = () => {
+    if (isLegacy) {
+      toast.error(LEGACY_FILE_MESSAGE);
+      setShowMenu(false);
+      return;
+    }
+    setShowMenu(false);
+    setShowShareModal(true);
   };
 
   const icon = getFileIcon(file.type);
@@ -404,6 +418,16 @@ export function FileCard({
                 ↓
               </button>
               <button
+                className={`tile-action-btn${isShared ? " is-shared" : ""}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleShareClick();
+                }}
+                title={isShared ? "Shared — click to manage" : "Share"}
+              >
+                <ShareIcon />
+              </button>
+              <button
                 className="tile-action-btn"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -434,6 +458,9 @@ export function FileCard({
         {showPreview && <FilePreviewModal file={file} onClose={() => setShowPreview(false)} />}
         {moveDialog}
         {renameModal}
+        {showShareModal && (
+          <ShareModal target={{ mode: "file", file }} onClose={() => setShowShareModal(false)} />
+        )}
       </>
     );
   }
@@ -473,12 +500,19 @@ export function FileCard({
           <button className="action-btn" onClick={handleDownload} title="Download">
             ↓
           </button>
-          <button 
-            className="action-btn" 
+          <button
+            className="action-btn"
             onClick={handlePreviewClick}
             title="Preview"
           >
             <PreviewEyeIcon />
+          </button>
+          <button
+            className={`action-btn${isShared ? " is-shared" : ""}`}
+            onClick={handleShareClick}
+            title={isShared ? "Shared — click to manage" : "Share"}
+          >
+            <ShareIcon />
           </button>
           <button className="action-btn menu-btn" onClick={() => setShowMenu(!showMenu)} title="More">
             ⋮
@@ -495,6 +529,9 @@ export function FileCard({
       {showPreview && <FilePreviewModal file={file} onClose={() => setShowPreview(false)} />}
       {moveDialog}
       {renameModal}
+      {showShareModal && (
+        <ShareModal target={{ mode: "file", file }} onClose={() => setShowShareModal(false)} />
+      )}
     </>
   );
 }

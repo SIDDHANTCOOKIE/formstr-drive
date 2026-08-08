@@ -7,8 +7,10 @@ import {
   getDriveConversationKeys,
   getDriveKeyPubkeys,
   getCachedDrivePubkeys,
+  onDriveKeysChanged,
 } from "./driveKey";
 import { enqueueMetadataEvent, publishAndDequeue } from "./metadataOutbox";
+import { publishDeletionRequest } from "./deletionRequest";
 
 const METADATA_KIND = 34578;
 const CLIENT_TAG = "formstr-drive";
@@ -89,6 +91,20 @@ export function clearFileIndexStore(): void {
 }
 
 /**
+ * Reflects a metadata event that was published by something other than
+ * {@link saveFileMetadata} — specifically the Android background upload
+ * service, which publishes the event itself from a native context. Without
+ * this the file wouldn't appear until its own event round-tripped back through
+ * the relay subscription.
+ *
+ * `createdAt` must be the published event's own timestamp, so the store's
+ * monotonicity guard treats the eventual echo as a no-op rather than a race.
+ */
+export function recordPublishedMetadata(metadata: FileMetadata, createdAt: number): void {
+  fileIndexStore.write(metadata.id, createdAt, metadata);
+}
+
+/**
  * Decrypt metadata by trying every Drive Key in the keyring until one
  * validates the NIP-44 MAC. This recovers files encrypted under an older
  * (forked) key that isn't the active one.
@@ -166,10 +182,27 @@ export function observeFileIndex(
   // waiting for this instance's own cache/network replay to catch back up.
   const unsubscribeStore = fileIndexStore.subscribe(handlers.onFiles);
 
+  // A drive that's empty because every event failed to decrypt looks
+  // identical, from the UI, to a drive that's genuinely empty — the per-event
+  // line below is debug-only and Chrome hides it by default. Track a count so
+  // there's at least one visible signal something is wrong, without spamming
+  // a warning per event on a large drive with a few legitimately stale ones.
+  let skippedCount = 0;
+  let lastWarnedSkippedCount = 0;
+
   const processEvent = async (event: Event) => {
     const dTag = event.tags.find((t: string[]) => t[0] === "d");
     const id = dTag?.[1];
     if (!id) return;
+
+    // The Drive Key event and shared-file/container events (services/sharing.ts)
+    // are also kind-34578, same author, but carry a `t` tag other than "files"
+    // — encrypted under a different key entirely, so they'd never decrypt here
+    // and would otherwise inflate skippedCount into a false "wrong Drive Key"
+    // warning below. A MISSING `t` tag is left alone: some legacy events
+    // predate the tag and must still reach the decrypt attempt below.
+    const tTag = event.tags.find((t: string[]) => t[0] === "t")?.[1];
+    if (tTag && tTag !== "files") return;
 
     const driveConversationKeys = await driveKeysPromise;
 
@@ -177,6 +210,7 @@ export function observeFileIndex(
     try {
       metadata = decryptMetadataWithDriveKey(event.content, driveConversationKeys);
     } catch (e) {
+      skippedCount++;
       console.debug("[FileIndex] Skipping undecryptable event:", event.id, e);
     }
 
@@ -212,6 +246,11 @@ export function observeFileIndex(
 
     handles.push(
       dataLayer.observe(
+        // Deliberately NOT filtered by `#t` here — some legacy events predate
+        // the `t` tag entirely (see isLegacyFile/LEGACY_FILE_MESSAGE in
+        // types/metadata.ts) and must still reach processEvent below, which is
+        // where non-file events (Drive Key, shared-file/container — see
+        // services/sharing.ts) are actually excluded, by their own `t` tag.
         [{ kinds: [METADATA_KIND], authors: fresh }],
         {
           onEvent: (event: Event) => {
@@ -225,6 +264,14 @@ export function observeFileIndex(
               if (!readyFired) {
                 readyFired = true;
                 handlers.onReady?.();
+              }
+              if (skippedCount > lastWarnedSkippedCount) {
+                lastWarnedSkippedCount = skippedCount;
+                console.warn(
+                  `[FileIndex] ${skippedCount} file-index event(s) could not be decrypted under ` +
+                    `[${Array.from(subscribedAuthors).join(", ")}] — an empty or incomplete drive ` +
+                    `may mean the wrong Drive Key is subscribed, not that the drive is actually empty.`,
+                );
               }
             });
           },
@@ -243,10 +290,24 @@ export function observeFileIndex(
     console.warn("[FileIndex] Could not resolve Drive Key pubkeys", e);
   });
 
+  // 3. A warm-cache getDriveKeyRing() returns immediately and reconciles with
+  //    relays in the background — if that reconciliation finds a pubkey #2's
+  //    lookup above missed (this device cached a stale/incomplete key set),
+  //    nothing else re-declares the author filter. Without this, files under
+  //    the real key are silently never requested — the subscription EOSEs
+  //    clean and just never asked about the right author. subscribeAuthors is
+  //    additive and self-dedupes, so calling it again here is always safe.
+  const unsubscribeDriveKeysChanged = onDriveKeysChanged(() => {
+    void getDriveKeyPubkeys().then(subscribeAuthors).catch((e) => {
+      console.warn("[FileIndex] Could not resolve updated Drive Key pubkeys", e);
+    });
+  });
+
   return () => {
     stopped = true;
     handles.forEach((h) => h.unobserve());
     unsubscribeStore();
+    unsubscribeDriveKeysChanged();
   };
 }
 
@@ -292,37 +353,6 @@ export async function saveFileMetadata(metadata: FileMetadata): Promise<PublishR
   return publishAndDequeue(signedEvent);
 }
 
-/**
- * Publishes a NIP-09 kind-5 deletion request for this file's metadata event,
- * addressed by its `a`-tag coordinate (kind:pubkey:d — 34578 is addressable,
- * so this asks relays to drop every version under this file's `d` tag, not
- * just one event id). Best-effort: many relays don't honor kind-5 at all, so
- * this is a courtesy to the ones that do, never the sole deletion mechanism
- * (see the tombstone in {@link deleteFileMetadata}, which is what deletion
- * actually depends on working).
- */
-async function publishDeletionRequest(fileId: string, fileName: string): Promise<void> {
-  try {
-    const key = await getActiveDriveKey();
-    const coordinate = `${METADATA_KIND}:${key.publicKey}:${fileId}`;
-    const deletionEvent = finalizeEvent(
-      {
-        kind: 5,
-        created_at: Math.floor(Date.now() / 1000),
-        tags: [
-          ["a", coordinate],
-          ["k", String(METADATA_KIND)],
-        ],
-        content: `Deleted ${fileName}`,
-      },
-      hexToBytes(key.secretKeyHex),
-    );
-    await dataLayer.publishEvent(deletionEvent);
-  } catch (e) {
-    console.warn("[FileIndex] NIP-09 deletion request failed (tombstone still applies)", e);
-  }
-}
-
 export async function deleteFileMetadata(_hash: string, currentMetadata: FileMetadata): Promise<void> {
   const deletedMetadata: FileMetadata = {
     ...currentMetadata,
@@ -332,7 +362,11 @@ export async function deleteFileMetadata(_hash: string, currentMetadata: FileMet
   // not obligated to honor NIP-09, so it must land regardless of the request
   // below. The deletion request itself is fire-and-forget on top of it.
   await saveFileMetadata(deletedMetadata);
-  void publishDeletionRequest(currentMetadata.id, currentMetadata.name);
+  const key = await getActiveDriveKey();
+  void publishDeletionRequest(
+    [`${METADATA_KIND}:${key.publicKey}:${currentMetadata.id}`],
+    `Deleted ${currentMetadata.name}`,
+  );
 }
 
 export function extractFolders(files: FileMetadata[]): string[] {

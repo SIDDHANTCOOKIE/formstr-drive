@@ -1,5 +1,6 @@
 import { GIFEncoder, quantize, applyPalette } from "gifenc";
 import { withTimeout } from "../../transfers/withTimeout";
+import { canvasToBlobWithFallback } from "../../utils/canvas";
 
 const PREVIEW_MAX_DIMENSION = 300;
 const PREVIEW_DURATION_SECONDS = 2.5;
@@ -175,9 +176,7 @@ function generateStaticVideoFrame(file: File): Promise<Uint8Array> {
           if (!ctx) throw new Error("Failed to get canvas 2D context");
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-          const blob = await new Promise<Blob>((res, rej) =>
-            canvas.toBlob((b) => (b ? res(b) : rej(new Error("Canvas export failed"))), "image/webp", 0.7),
-          );
+          const blob = await canvasToBlobWithFallback(canvas, 0.7);
           const bytes = new Uint8Array(await blob.arrayBuffer());
           settle(() => resolve(bytes));
         } catch (e) {

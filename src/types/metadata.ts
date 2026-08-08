@@ -85,22 +85,6 @@ export function chunkHashes(
   return chunks.map((chunk) => (typeof chunk === "string" ? chunk : chunk.hash));
 }
 
-/**
- * True if any chunk was routed to a server other than the file's primary
- * `server` (i.e. an upload fallback happened). The Android native download
- * path (src/native/driveManifest.ts) only knows one server per file and can't
- * fetch such a file correctly — callers must fall back to the JS download
- * path (which does honor per-chunk servers via resolveChunks) when this is
- * true, even on Android.
- */
-export function hasChunkServerOverride(
-  chunks: ReadonlyArray<ChunkRef | string> | undefined,
-  fileServer: string,
-): boolean {
-  if (!chunks) return false;
-  return chunks.some((c) => typeof c !== "string" && c.server !== undefined && c.server !== fileServer);
-}
-
 export interface ResolvedChunk {
   hash: string;
   server: string;

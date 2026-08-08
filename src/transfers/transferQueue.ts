@@ -9,8 +9,9 @@ import { downloadFileStreaming } from "../services/downloadFile";
 import { downloadFileToDownloads, ensureNotificationPermission } from "../native/driveManifest";
 import { isAndroidPlatform } from "../utils/platform";
 import { isAbortError } from "../utils/abortError";
-import { hasChunkServerOverride, type FileMetadata } from "../types/metadata";
+import { type FileMetadata } from "../types/metadata";
 import { uploadDriver } from "./uploadDriver";
+import { nativeUploadDriver } from "./nativeUploadDriver";
 
 // Upload MUST stay at 1: each upload calls the Nostr signer once, for the
 // Blossom auth event (NIP-07 extension / Amber) — file-index metadata is
@@ -164,14 +165,10 @@ async function runDownload(id: string, job: DownloadJob) {
     });
   };
 
-  // The native Android downloader only knows one server per file — a chunk
-  // that fell back to a different server during upload can't be fetched by
-  // it. Fall back to the JS download path (which resolves per-chunk servers
-  // via resolveChunks) for any such file, even on Android.
-  const canUseNativeDownload =
-    isAndroidPlatform && !hasChunkServerOverride(file.chunks, file.server);
-
-  if (canUseNativeDownload) {
+  // The native downloader resolves per-chunk servers itself now, so every
+  // Android download can take the foreground-service path — which is the only
+  // one that survives the app being backgrounded or swiped away.
+  if (isAndroidPlatform) {
     await ensureNotificationPermission();
     updateTransfer(id, { progress: 0, stage: "Downloading..." });
     const result = await downloadFileToDownloads(
@@ -204,16 +201,24 @@ async function runUpload(id: string, job: UploadJob): Promise<FileMetadata> {
     stage?: string;
     currentChunk?: number;
     totalChunks?: number;
+    survivesAppClose?: boolean;
   }) => {
     updateTransfer(id, {
       progress: info.progress ?? 0,
       stage: info.stage,
       currentChunk: info.currentChunk,
       totalChunks: info.totalChunks,
+      ...(info.survivesAppClose !== undefined
+        ? { survivesAppClose: info.survivesAppClose }
+        : {}),
     });
   };
 
-  return uploadDriver(job.file, job.candidateServers, job.targetFolder, signal, onProgress);
+  // Android runs the network phase in a foreground service so the upload
+  // survives the app being backgrounded or swiped away; the web driver does
+  // everything in-page. Both produce the same FileMetadata.
+  const driver = isAndroidPlatform ? nativeUploadDriver : uploadDriver;
+  return driver(job.file, job.candidateServers, job.targetFolder, signal, onProgress);
 }
 
 // Removes a terminal (completed/failed/cancelled) entry so its id can be
@@ -234,6 +239,19 @@ function resetIfTerminal(id: string): boolean {
   }
   // Still active — caller should not start a duplicate.
   return false;
+}
+
+/**
+ * True if {@link retryTransfer} can actually restart this transfer. Adopted
+ * native rows (a transfer that outlived the JS context that started it) have no
+ * job behind them — the `File` handle died with that context — so the UI must
+ * not offer them a Retry button that would silently do nothing.
+ */
+export function canRetryTransfer(id: string): boolean {
+  const item = getTransfer(id);
+  if (!item) return false;
+  if (item.status !== "failed" && item.status !== "cancelled") return false;
+  return jobs.has(id);
 }
 
 /** Retry a failed or cancelled transfer, reusing its original job (the File /

@@ -28,6 +28,18 @@ export class BlossomClient {
     authHeader: string,
     onProgress?: (percent: number) => void,
     signal?: AbortSignal,
+    /**
+     * Coarse phase transitions, independent of `onProgress`'s byte counter —
+     * callers use this to keep a stage label truthful even when zero bytes
+     * ever move (a blocked CORS preflight or a black-holed connection never
+     * fires `xhr.upload.onprogress`, so a caller relying on that alone shows a
+     * stale "Encrypting..." label for the entire retry cascade).
+     *  - "connecting": the request has been opened and is being sent.
+     *  - "stalled": no upload progress for STALL_TIMEOUT_MS while a request is
+     *    in flight — the connection may still succeed or may be dead; this is
+     *    a "still trying" signal, not a failure.
+     */
+    onStage?: (stage: "connecting" | "stalled") => void,
   ): Promise<string> {
     if (signal?.aborted) {
       throw new DOMException("Upload aborted", "AbortError");
@@ -56,6 +68,22 @@ export class BlossomClient {
         reject(new Error("Upload timed out after 60s of inactivity"));
       }, 60000);
 
+      // Fires once while no real progress has been seen, so a stalled request
+      // (nothing sent, nothing received — the CORS/black-hole case) surfaces
+      // as "still trying" well before the 60s idle timeout gives up on it.
+      const STALL_TIMEOUT_MS = 10000;
+      let stallTimer: ReturnType<typeof setTimeout> | undefined = onStage
+        ? setTimeout(() => {
+            onStage("stalled");
+          }, STALL_TIMEOUT_MS)
+        : undefined;
+      const clearStallTimer = () => {
+        if (stallTimer) {
+          clearTimeout(stallTimer);
+          stallTimer = undefined;
+        }
+      };
+
       if (xhr.upload) {
         xhr.upload.onprogress = (event) => {
           clearTimeout(idleTimer);
@@ -63,6 +91,7 @@ export class BlossomClient {
             xhr.abort();
             reject(new Error("Upload timed out after 60s of inactivity"));
           }, 60000);
+          clearStallTimer();
           if (onProgress && event.lengthComputable) {
             onProgress(Math.round((event.loaded / event.total) * 100));
           }
@@ -73,6 +102,7 @@ export class BlossomClient {
         // an upload that actually succeeded. Give the server a generous window.
         xhr.upload.onload = () => {
           clearTimeout(idleTimer);
+          clearStallTimer();
           idleTimer = setTimeout(() => {
             xhr.abort();
             reject(new Error("Upload timed out: server did not respond after 120s"));
@@ -82,6 +112,7 @@ export class BlossomClient {
 
       xhr.onload = () => {
         clearTimeout(idleTimer);
+        clearStallTimer();
         if (xhr.status >= 200 && xhr.status < 300) {
           try {
             const json = JSON.parse(xhr.responseText);
@@ -96,6 +127,7 @@ export class BlossomClient {
 
       xhr.onerror = () => {
         clearTimeout(idleTimer);
+        clearStallTimer();
         reject(
           new BlossomError(
             // The browser reports any network-level failure this way — an actual
@@ -110,6 +142,7 @@ export class BlossomClient {
 
       xhr.onabort = () => {
         clearTimeout(idleTimer);
+        clearStallTimer();
         reject(new DOMException("Upload aborted", "AbortError"));
       };
 
@@ -117,6 +150,7 @@ export class BlossomClient {
         signal.addEventListener("abort", () => xhr.abort(), { once: true });
       }
 
+      onStage?.("connecting");
       xhr.send(new Blob([blob as any], { type: "application/octet-stream" }));
     });
   }
@@ -183,6 +217,37 @@ export class BlossomClient {
     }
 
     return new Uint8Array(await res.arrayBuffer());
+  }
+
+  /**
+   * Checks whether a blob is actually stored on this server (BUD-01 `HEAD`).
+   * Returns `true`/`false` only for a definitive answer (2xx / 404) — any
+   * other outcome (network failure, unexpected status) throws, since callers
+   * that use this to decide whether to trust a pending write must never treat
+   * "couldn't check" the same as "confirmed absent".
+   */
+  async exists(sha256: string): Promise<boolean> {
+    let res: Response;
+    try {
+      res = await withTimeout(
+        fetch(`${this.baseUrl}/${sha256}`, { method: "HEAD" }),
+        15000,
+        "fetch-timeout",
+        `Blossom existence check timed out after 15s for ${sha256}`,
+      );
+    } catch (e) {
+      if (e instanceof TypeError) {
+        throw new BlossomError(
+          `Network error reaching ${this.baseUrl} — the connection was blocked or dropped.`,
+          { isCorsError: true },
+        );
+      }
+      throw e;
+    }
+
+    if (res.status === 404) return false;
+    if (res.ok) return true;
+    throw new BlossomError(res.headers.get("X-Reason") || res.statusText, { status: res.status });
   }
 
   /**
