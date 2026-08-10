@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import type { FileMetadata } from '../../types/metadata';
+import { isLegacyFile, LEGACY_FILE_MESSAGE, type FileMetadata } from '../../types/metadata';
 import { useFileIndex } from '../../hooks/useFileContext';
 import { FilePreviewModal } from "./FilePreviewModal";
 import { getFileIcon, MAX_PREVIEW_SIZE } from '../../utils/fileTypeHelpers';
@@ -36,6 +36,11 @@ export function FileCard({
 }: FileCardProps) {
   const { deleteFile, moveFile, folders, renameFile } = useFileIndex();
   const toast = useToast();
+  // Files uploaded before the random-id refactor share no resolvable identity
+  // (see isLegacyFile) — every action below must be blocked at this layer,
+  // since the context functions can only defend against a falsy hash, not
+  // against this component handing them one in the first place.
+  const isLegacy = isLegacyFile(file);
   const [showMenu, setShowMenu] = useState(false);
   const [showMoveDialog, setShowMoveDialog] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
@@ -108,6 +113,10 @@ export function FileCard({
   };
 
   const handleDownload = () => {
+    if (isLegacy) {
+      toast.error(LEGACY_FILE_MESSAGE);
+      return;
+    }
     // The transfer panel is the source of truth for progress, errors and retry,
     // so there's no success toast here. Only tell the user when the click was a
     // no-op because the file is already downloading.
@@ -118,9 +127,14 @@ export function FileCard({
   };
 
   const handleDelete = async () => {
+    if (isLegacy) {
+      toast.error(LEGACY_FILE_MESSAGE);
+      setShowMenu(false);
+      return;
+    }
     if (confirm(`Delete "${file.name}"?`)) {
       try {
-        await deleteFile(file.hash);
+        await deleteFile(file.id);
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Delete failed");
       }
@@ -129,6 +143,11 @@ export function FileCard({
   };
 
   const handleRenameOpen = () => {
+    if (isLegacy) {
+      toast.error(LEGACY_FILE_MESSAGE);
+      setShowMenu(false);
+      return;
+    }
     setRenameValue(file.name);
     setShowRenameModal(true);
     setShowMenu(false);
@@ -138,7 +157,7 @@ export function FileCard({
     const trimmed = renameValue.trim();
     if (trimmed && trimmed !== file.name) {
       try {
-        await renameFile(file.hash, trimmed);
+        await renameFile(file.id, trimmed);
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Rename failed");
       }
@@ -152,13 +171,18 @@ export function FileCard({
   };
 
   const handleMoveClick = () => {
+    if (isLegacy) {
+      toast.error(LEGACY_FILE_MESSAGE);
+      setShowMenu(false);
+      return;
+    }
     setShowMenu(false);
     setShowMoveDialog(true);
   };
 
   const handleMove = async (newFolder: string) => {
     try {
-      await moveFile(file.hash, newFolder);
+      await moveFile(file.id, newFolder);
       setShowMoveDialog(false);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Move failed");
@@ -169,7 +193,14 @@ export function FileCard({
   const hasPreview = previewloaded && !!preview;
 
   const handleSelectionToggle = () => {
-    onToggleSelection?.(file.hash);
+    // Every legacy file shares the same undefined id — letting one into the
+    // selected set would select all of them together and let bulk move/delete
+    // act on the wrong files.
+    if (isLegacy) {
+      toast.error(LEGACY_FILE_MESSAGE);
+      return;
+    }
+    onToggleSelection?.(file.id);
   };
 
 
@@ -182,7 +213,7 @@ export function FileCard({
     >
       <input
         type="checkbox"
-        checked={selected}
+        checked={!isLegacy && selected}
         onChange={handleSelectionToggle}
         aria-label={`Select ${file.name}`}
       />
@@ -258,9 +289,9 @@ export function FileCard({
         )}
         <div
           className={`file-tile ${showMenu ? "menu-open" : ""} ${selected ? "selected" : ""}`}
-          draggable
+          draggable={!isLegacy}
           onDragStart={(e) => {
-            e.dataTransfer.setData(FILE_HASH_MIME, file.hash);
+            e.dataTransfer.setData(FILE_HASH_MIME, file.id);
             e.dataTransfer.effectAllowed = "move";
           }}
           onMouseEnter={() => setIsHovering(true)}
@@ -340,9 +371,9 @@ export function FileCard({
       {showMenu && <div className="file-menu-backdrop" onClick={() => setShowMenu(false)} />}
       <div
         className={`file-card ${selected ? "selected" : ""}`}
-        draggable
+        draggable={!isLegacy}
         onDragStart={(e) => {
-          e.dataTransfer.setData(FILE_HASH_MIME, file.hash);
+          e.dataTransfer.setData(FILE_HASH_MIME, file.id);
           e.dataTransfer.effectAllowed = "move";
         }}
         onMouseEnter={() => setIsHovering(true)}
