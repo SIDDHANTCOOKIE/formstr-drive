@@ -1,10 +1,14 @@
 import { useEffect } from "react";
 import { isAndroidPlatform } from "../utils/platform";
-import { adoptActiveNativeDownloads, startNativeEventBridge } from "../transfers/nativeAdoption";
+import {
+  adoptActiveNativeDownloads,
+  adoptActiveNativeUploads,
+  startNativeEventBridge,
+} from "../transfers/nativeAdoption";
 
 /**
- * Android only: re-adopts native downloads that outlived the JS context (app
- * killed/relaunched mid-download) so they reappear as cancellable rows, and
+ * Android only: re-adopts native transfers that outlived the JS context (app
+ * killed/relaunched mid-transfer) so they reappear as cancellable rows, and
  * keeps a single app-lifetime listener routing their progress/completion.
  */
 export function useNativeTransferAdoption(): void {
@@ -16,10 +20,12 @@ export function useNativeTransferAdoption(): void {
       teardown = fn;
     });
     void adoptActiveNativeDownloads();
+    void adoptActiveNativeUploads();
 
     const onVisible = () => {
       if (document.visibilityState === "visible") {
         void adoptActiveNativeDownloads();
+        void adoptActiveNativeUploads();
       }
     };
     document.addEventListener("visibilitychange", onVisible);
