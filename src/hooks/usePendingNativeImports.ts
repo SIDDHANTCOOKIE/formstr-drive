@@ -5,6 +5,7 @@ import {
   removePendingNativeImport,
 } from "../native/driveManifest";
 import { queueUpload } from "../transfers/transferQueue";
+import { getUploadCandidateServers, type ServerInfo } from "../Provider/BlossomServerProvider";
 
 interface PendingNativeImportsOptions {
   isSignedIn: boolean;
@@ -15,6 +16,9 @@ interface PendingNativeImportsOptions {
    *  "ready" in FileIndexProvider). */
   indexReady: boolean;
   selectedServer: string;
+  /** Every configured server, so an import that fails on `selectedServer` can
+   *  fall back to another candidate (see getUploadCandidateServers). */
+  servers: ServerInfo[];
   onError: (message: string) => void;
 }
 
@@ -34,6 +38,7 @@ export function usePendingNativeImports({
   settingsLoaded,
   indexReady,
   selectedServer,
+  servers,
   onError,
 }: PendingNativeImportsOptions): void {
   const processingRef = useRef(false);
@@ -70,11 +75,17 @@ export function usePendingNativeImports({
             type: importPayload.mimeType || "application/octet-stream",
           });
 
-          queueUpload(importedFile, selectedServer, importPayload.folderPath, {
-            onComplete: () => {
-              void removePendingNativeImport(importPayload.id);
+          queueUpload(
+            importedFile,
+            selectedServer,
+            importPayload.folderPath,
+            getUploadCandidateServers(selectedServer, servers),
+            {
+              onComplete: () => {
+                void removePendingNativeImport(importPayload.id);
+              },
             },
-          });
+          );
         } catch (pendingError) {
           console.error("Failed to process pending Android Files import", pendingError);
           onError(
@@ -88,7 +99,7 @@ export function usePendingNativeImports({
     } finally {
       processingRef.current = false;
     }
-  }, [indexReady, isSignedIn, onError, pubkey, selectedServer]);
+  }, [indexReady, isSignedIn, onError, pubkey, selectedServer, servers]);
 
   useEffect(() => {
     if (
