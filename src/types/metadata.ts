@@ -62,17 +62,6 @@ export function generateFileId(): string {
 }
 
 /**
- * The file's primary blob hash — the first chunk's Blossom hash. Used by paths
- * that need a single address to fetch or correlate (native download, docs
- * deeplink). Returns undefined for a file with no chunks.
- */
-export function primaryBlobHash(
-  chunks: ReadonlyArray<ChunkRef | string> | undefined,
-): string | undefined {
-  return chunkHashes(chunks)[0];
-}
-
-/**
  * Normalizes a file's `chunks` to a list of hash strings, accepting both the
  * current object form (`{ hash, server? }[]`) and the legacy string form
  * (`string[]`) that older published metadata still carries. Keeping this

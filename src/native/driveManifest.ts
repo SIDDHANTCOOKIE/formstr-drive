@@ -1,10 +1,12 @@
 import { registerPlugin, type PluginListenerHandle } from "@capacitor/core";
-import { chunkHashes, primaryBlobHash, type ChunkRef, type FileMetadata } from "../types/metadata";
+import { chunkHashes, type ChunkRef, type FileMetadata } from "../types/metadata";
 import { isAndroidPlatform } from "../utils/platform";
 
 export interface NativeDownloadStartedEvent {
   id: string;
-  hash: string;
+  /** Echoed back verbatim from the `downloadToDownloads` call that started
+   *  this download — see the correlation note above pendingDownloadsById. */
+  correlationId: string;
 }
 
 export interface NativeDownloadEvent {
@@ -51,7 +53,7 @@ type DriveFilesPlugin = {
   downloadToDownloads(options: {
     server: string;
     chunks?: string[];
-    hash: string;
+    correlationId: string;
     encryptionKey: string;
     fileName: string;
     mimeType: string;
@@ -103,7 +105,6 @@ export interface NativeDriveFolderEntry {
 
 export interface NativeDriveFileEntry {
   id: string;
-  hash: string;
   name: string;
   mimeType: string;
   size: number;
@@ -250,7 +251,6 @@ export function buildNativeDriveManifest(
 
     return {
       id: toFileDocumentId(file.id),
-      hash: primaryBlobHash(file.chunks) ?? "",
       name: file.name,
       mimeType: file.type || "application/octet-stream",
       size: file.size,
@@ -381,15 +381,16 @@ interface DownloadCallbacks {
   onStarted?: (cancel: () => void) => void;
   // The native download id (a random UUID) once `downloadStarted` has arrived.
   // Until then progress/cancel can't be routed, so the entry lives in
-  // `pendingDownloadsByHash` keyed by the file hash we do know up front.
+  // `pendingDownloadsByCorrelationId` under the token we minted up front.
   nativeId?: string;
 }
 
-// The native plugin generates a random UUID per download and reports progress
-// and completion under that id — NOT the file hash. So callbacks are registered
-// by hash first (pendingDownloadsByHash), then re-keyed to the native id when
-// the `downloadStarted` event delivers the correlation (event.hash -> event.id).
-const pendingDownloadsByHash = new Map<string, DownloadCallbacks>();
+// The native plugin generates its own random UUID per download and reports
+// progress and completion under that id, which the caller can't know at call
+// time. So each call mints a correlation token, registers its callbacks under
+// it, and the native side echoes the token back on `downloadStarted` alongside
+// the id it chose — at which point the entry is re-keyed to that id.
+const pendingDownloadsByCorrelationId = new Map<string, DownloadCallbacks>();
 const activeDownloadsById = new Map<string, DownloadCallbacks>();
 let nativeListenersInitialized = false;
 
@@ -398,9 +399,9 @@ async function ensureNativeListeners() {
   nativeListenersInitialized = true;
 
   await driveFilesPlugin.addListener("downloadStarted", (event) => {
-    const callbacks = pendingDownloadsByHash.get(event.hash);
+    const callbacks = pendingDownloadsByCorrelationId.get(event.correlationId);
     if (!callbacks) return;
-    pendingDownloadsByHash.delete(event.hash);
+    pendingDownloadsByCorrelationId.delete(event.correlationId);
     callbacks.nativeId = event.id;
     activeDownloadsById.set(event.id, callbacks);
     callbacks.onStarted?.(() => {
@@ -432,15 +433,15 @@ export async function downloadFileToDownloads(
     throw new Error("Native download is only available on Android");
   }
   const plugin = driveFilesPlugin;
-  // The native plugin correlates a download by its first blob's hash (see
-  // downloadStarted below), so it needs a single address the same way the
-  // manifest's `hash` field does.
-  const hash = primaryBlobHash(file.chunks) ?? "";
+  // Correlates this call to the `downloadStarted` event the plugin fires with
+  // the id it generated. Per-call rather than per-file, so downloading the
+  // same file twice concurrently doesn't collide on one map key.
+  const correlationId = crypto.randomUUID();
 
   await ensureNativeListeners();
 
   const callbacks: DownloadCallbacks = { onProgress, onStarted };
-  pendingDownloadsByHash.set(hash, callbacks);
+  pendingDownloadsByCorrelationId.set(correlationId, callbacks);
 
   try {
     // No timeout here: downloadToDownloads resolves only when the *whole* file
@@ -449,7 +450,7 @@ export async function downloadFileToDownloads(
     return await plugin.downloadToDownloads({
       server: file.server,
       chunks: chunkHashes(file.chunks),
-      hash,
+      correlationId,
       encryptionKey: file.encryptionKey,
       fileName: file.name,
       mimeType: file.type || "application/octet-stream",
@@ -461,7 +462,7 @@ export async function downloadFileToDownloads(
     }
     throw e;
   } finally {
-    pendingDownloadsByHash.delete(hash);
+    pendingDownloadsByCorrelationId.delete(correlationId);
     if (callbacks.nativeId) activeDownloadsById.delete(callbacks.nativeId);
   }
 }
