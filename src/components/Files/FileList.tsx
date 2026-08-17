@@ -6,7 +6,6 @@ import { UploadZone } from '../Upload/UploadZone';
 import { SearchIcon, GridViewIcon, ListViewIcon, FolderIcon } from '../icons/Icons';
 
 import { isDirectChildFolder, getFolderName, getFolderItemCount } from '../../utils/folder';
-import { isLegacyFile } from '../../types/metadata';
 import { type SortKey, SORT_LABEL } from '../../utils/constants';
 import { FILE_HASH_MIME } from '../../utils/constants';
 
@@ -112,12 +111,7 @@ export function FileList() {
       if (allVisibleSelected) {
         return new Set();
       }
-      // Legacy files (pre-dating the random id) all share the same undefined
-      // id — including them here would collapse them into one shared "select
-      // all" entry and let bulk actions touch the wrong files.
-      return new Set(
-        currentFiles.filter((file) => !isLegacyFile(file)).map((file) => file.id),
-      );
+      return new Set(currentFiles.map((file) => file.id));
     });
   };
 

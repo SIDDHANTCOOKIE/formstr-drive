@@ -40,20 +40,20 @@ export interface FileMetadata {
  * content is the old `{ hash, ... }` shape with no `id` field at all — the
  * type says `id: string`, but that's only a guarantee for files saved by the
  * current client; JSON.parse of an old event doesn't enforce it). Such files
- * can't be safely moved, renamed, deleted, or dragged: their identity can't be
+ * can't be moved, renamed, deleted, dragged or shared: their identity can't be
  * resolved, and because EVERY legacy file shares the same `undefined` id,
  * looking one up by id risks matching a different legacy file entirely. They
  * also can't be downloaded — their chunks were encrypted with a blob format
- * this client no longer reads. Callers must check this before attempting any
- * per-file action and surface an explicit error rather than silently no-op'ing
- * or (worse) acting on the wrong file.
+ * this client no longer reads.
+ *
+ * There is exactly one caller, and there should stay exactly one: the emit
+ * filter in services/fileIndex.ts. Excluding them at that single boundary is
+ * what lets everything downstream treat `id` as the guaranteed handle the type
+ * already claims it is, instead of re-checking at every action.
  */
 export function isLegacyFile(file: FileMetadata): boolean {
   return !file.id;
 }
-
-export const LEGACY_FILE_MESSAGE =
-  "This file was uploaded before an app update and is no longer supported. It can't be moved, renamed, deleted, or downloaded through the app.";
 
 /** A random 6-8 char id for a file's `d` tag (NIP-FS). Hex-encoded 4 bytes. */
 export function generateFileId(): string {

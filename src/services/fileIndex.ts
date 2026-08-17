@@ -1,7 +1,7 @@
 import { nip44, finalizeEvent, type Event } from "nostr-tools";
 import { hexToBytes } from "nostr-tools/utils";
 import { dataLayer, type PublishResult } from "@formstr/local-relay";
-import type { FileMetadata } from "../types/metadata";
+import { isLegacyFile, type FileMetadata } from "../types/metadata";
 import {
   getActiveDriveKey,
   getDriveConversationKeys,
@@ -16,7 +16,13 @@ const METADATA_KIND = 34578;
 const CLIENT_TAG = "formstr-drive";
 
 /**
- * The single, monotonic source of truth for the decrypted file list. Every
+ * The single, monotonic source of truth for the decrypted file list, and the
+ * one place legacy files are excluded — `emit()` drops them (see isLegacyFile),
+ * so nothing downstream ever sees a file it can't act on. Note they are still
+ * *written* to `entries`: their `created_at` has to keep participating in the
+ * monotonicity guard below, or a stale decryptable event could resurrect one.
+ *
+ * Every
  * writer — the live relay subscription (`observeFileIndex`) and any
  * optimistic local edit (`saveFileMetadata`) — goes through `write()`, which
  * only accepts a strictly newer `created_at` per file id. That one invariant
@@ -42,7 +48,7 @@ const fileIndexStore = (() => {
     const files = Array.from(entries.values())
       .filter(
         (e): e is { created_at: number; metadata: FileMetadata } =>
-          e.metadata !== null && !e.metadata.deleted,
+          e.metadata !== null && !e.metadata.deleted && !isLegacyFile(e.metadata),
       )
       .sort((a, b) => b.created_at - a.created_at)
       .map((e) => e.metadata);
@@ -247,8 +253,8 @@ export function observeFileIndex(
     handles.push(
       dataLayer.observe(
         // Deliberately NOT filtered by `#t` here — some legacy events predate
-        // the `t` tag entirely (see isLegacyFile/LEGACY_FILE_MESSAGE in
-        // types/metadata.ts) and must still reach processEvent below, which is
+        // the `t` tag entirely (see isLegacyFile in types/metadata.ts) and
+        // must still reach processEvent below, which is
         // where non-file events (Drive Key, shared-file/container — see
         // services/sharing.ts) are actually excluded, by their own `t` tag.
         [{ kinds: [METADATA_KIND], authors: fresh }],

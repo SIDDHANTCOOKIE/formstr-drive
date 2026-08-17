@@ -8,7 +8,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { chunkHashes, LEGACY_FILE_MESSAGE, type FileMetadata } from "../types/metadata";
+import { chunkHashes, type FileMetadata } from "../types/metadata";
 import { BlossomClient } from "../blossom";
 import { createAuthEvent } from "../auth";
 import {
@@ -345,11 +345,6 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
 
   const deleteFile = useCallback(
     async (hash: string) => {
-      // Every legacy file (pre-dating the random `id`) shares the same
-      // undefined id — matching on a falsy hash risks deleting a DIFFERENT
-      // legacy file than the one the user actually selected. Reject up front
-      // rather than resolve to the wrong file.
-      if (!hash) throw new Error(LEGACY_FILE_MESSAGE);
       const file = files.find((f) => f.id === hash);
       if (!file) return;
 
@@ -365,7 +360,6 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
 
   const deleteFiles = useCallback(
     async (hashes: string[]) => {
-      if (hashes.some((h) => !h)) throw new Error(LEGACY_FILE_MESSAGE);
       const hashSet = new Set(hashes);
       const targetFiles = files.filter((file) => hashSet.has(file.id));
 
@@ -382,7 +376,6 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
 
   const moveFile = useCallback(
     async (hash: string, newFolder: string) => {
-      if (!hash) throw new Error(LEGACY_FILE_MESSAGE);
       const file = files.find((f) => f.id === hash);
       if (!file) return;
 
@@ -397,7 +390,6 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
 
   const moveFiles = useCallback(
     async (hashes: string[], newFolder: string) => {
-      if (hashes.some((h) => !h)) throw new Error(LEGACY_FILE_MESSAGE);
       const hashSet = new Set(hashes);
       const targetFiles = files.filter((file) => hashSet.has(file.id));
 
@@ -411,7 +403,6 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
 
   const renameFile = useCallback(
     async (hash: string, newName: string) => {
-      if (!hash) throw new Error(LEGACY_FILE_MESSAGE);
       const file = files.find((f) => f.id === hash);
       if (!file) return;
 
