@@ -4,39 +4,28 @@ import {
   useEffect,
   useCallback,
   useMemo,
-  useRef,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { chunkHashes, type FileMetadata } from "../types/metadata";
-import { BlossomClient } from "../blossom";
-import { createAuthEvent } from "../auth";
+import { type FileMetadata } from "../types/metadata";
 import {
   observeFileIndex,
-  saveFileMetadata,
-  deleteFileMetadata,
   extractFolders,
   clearFileIndexStore,
 } from "../services/fileIndex";
-import { drainMetadataOutbox } from "../services/metadataOutbox";
 import {
   getRelayRefresh,
   subscribeRelayRefresh,
 } from "../dataLayer/relayRefresh";
 import { useProfileContext } from "../hooks/useProfileContext";
 import { getStoredItem, setStoredItem, STORAGE_KEYS } from "../utils/persistence";
-import {
-  clearNativeDriveManifest,
-  listPendingNativeImports,
-  readPendingNativeImport,
-  removePendingNativeImport,
-  syncNativeDriveManifest,
-} from "../native/driveManifest";
 import { useBlossomServer } from "../hooks/useBlossomServer";
-import { isAndroidPlatform } from "../utils/platform";
-import { queueUpload } from "../transfers/transferQueue";
-import { getTransfers } from "../transfers/transferStore";
-import { adoptActiveNativeDownloads, startNativeEventBridge } from "../transfers/nativeAdoption";
+import { useFileMutations } from "../hooks/useFileMutations";
+import { useMetadataOutboxDrain } from "../hooks/useMetadataOutboxDrain";
+import { useNativeManifestSync } from "../hooks/useNativeManifestSync";
+import { useNativeTransferAdoption } from "../hooks/useNativeTransferAdoption";
+import { usePendingNativeImports } from "../hooks/usePendingNativeImports";
+import { useTransferExitWarning } from "../hooks/useTransferExitWarning";
 
 // Re-export type if needed anywhere else
 export type { FileMetadata };
@@ -85,8 +74,6 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
   // (pending-import processing, native manifest sync) — unaffected by this.
   const [keyReady, setKeyReady] = useState(false);
   const [manualRefreshCount, setManualRefreshCount] = useState(0);
-  const processingPendingImportsRef = useRef(false);
-  const drainingOutboxRef = useRef(false);
 
   // Bumps when the relay worker can newly serve cached data it couldn't a
   // moment ago (IndexedDB hydration finished, or the worker restarted after a
@@ -103,27 +90,6 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
     const foldersFromFiles = extractFolders(files);
     return Array.from(new Set([...foldersFromFiles, ...customFolders])).sort();
   }, [files, customFolders]);
-
-  // Warn before the tab/window closes while transfers are still in flight and
-  // would be lost. A native download runs in a foreground service and survives,
-  // so it needs no warning; a native upload runs in the webview (background
-  // upload is disabled) and DOES die — so the rule is: warn unless every active
-  // transfer is a native download. On web nothing survives a close, so any
-  // active transfer warns.
-  useEffect(() => {
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      const active = getTransfers().filter(
-        (t) => t.status === "running" || t.status === "pending",
-      );
-      if (active.length === 0) return;
-      const allSurvive = active.every((t) => t.type === "download" && isAndroidPlatform);
-      if (allSurvive) return;
-      e.preventDefault();
-      e.returnValue = "";
-    };
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, []);
 
   useEffect(() => {
     const loadCustomFolders = async () => {
@@ -142,42 +108,6 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
     if (!settingsLoaded) return;
     void setStoredItem(STORAGE_KEYS.CUSTOM_FOLDERS, customFolders);
   }, [customFolders, settingsLoaded]);
-
-  useEffect(() => {
-    if (restoring) {
-      return;
-    }
-
-    if (!isSignedIn || !pubkey) {
-      void clearNativeDriveManifest().catch((manifestError) => {
-        console.error("Failed to clear Android Drive manifest", manifestError);
-      });
-    }
-  }, [isSignedIn, pubkey, restoring]);
-
-  // Android only: re-adopt native downloads that outlived the JS context (app
-  // killed/relaunched mid-download) so they reappear as cancellable rows, and
-  // keep a single app-lifetime listener routing their progress/completion.
-  useEffect(() => {
-    if (!isAndroidPlatform) return;
-
-    let teardown: (() => void) | undefined;
-    void startNativeEventBridge().then((fn) => {
-      teardown = fn;
-    });
-    void adoptActiveNativeDownloads();
-
-    const onVisible = () => {
-      if (document.visibilityState === "visible") {
-        void adoptActiveNativeDownloads();
-      }
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisible);
-      teardown?.();
-    };
-  }, []);
 
   const addCustomFolder = useCallback((path: string) => {
     setCustomFolders((prev) => {
@@ -218,42 +148,6 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
     return unobserve;
   }, [isSignedIn, pubkey, restoring, relayRefresh, manualRefreshCount]);
 
-  // Drain any metadata events that were signed (with the Drive Key — free,
-  // no signer prompt) but never confirmed published: the app may have been
-  // killed between chunkedUploadFile resolving and saveFileMetadata's publish
-  // call, or every relay may have rate-limited the attempt. Retrying costs
-  // zero prompts, so this can run freely on mount, on reconnect, and whenever
-  // the tab becomes visible again.
-  const drainOutbox = useCallback(async () => {
-    if (drainingOutboxRef.current) return;
-    drainingOutboxRef.current = true;
-    try {
-      const { published } = await drainMetadataOutbox();
-      if (published > 0) {
-        console.log(`[FileIndex] Drained ${published} queued metadata event(s)`);
-      }
-    } catch (e) {
-      console.warn("[FileIndex] Metadata outbox drain failed", e);
-    } finally {
-      drainingOutboxRef.current = false;
-    }
-  }, []);
-
-  useEffect(() => {
-    if (restoring || !isSignedIn || !pubkey) return;
-    void drainOutbox();
-  }, [isSignedIn, pubkey, restoring, relayRefresh, drainOutbox]);
-
-  useEffect(() => {
-    const handleVisible = () => {
-      if (document.visibilityState === "visible" && isSignedIn && !restoring) {
-        void drainOutbox();
-      }
-    };
-    document.addEventListener("visibilitychange", handleVisible);
-    return () => document.removeEventListener("visibilitychange", handleVisible);
-  }, [isSignedIn, restoring, drainOutbox]);
-
   // With a standing observe the worker keeps the index synced on its own;
   // a manual refresh just re-declares the interest (cache replay + re-sync).
   const refresh = useCallback(async () => {
@@ -261,260 +155,32 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
     setManualRefreshCount((n) => n + 1);
   }, [isSignedIn, pubkey]);
 
-  useEffect(() => {
-    if (
-      restoring ||
-      !settingsLoaded ||
-      !isSignedIn ||
-      !pubkey ||
-      loading ||
-      !hasHydratedIndex
-    ) {
-      return;
-    }
+  const { deleteFile, deleteFiles, moveFile, moveFiles, renameFile } =
+    useFileMutations(files);
 
-    void syncNativeDriveManifest(files, customFolders).catch((manifestError) => {
-      console.error("Failed to sync Android Drive manifest", manifestError);
-    });
-  }, [
-    customFolders,
+  useTransferExitWarning();
+  useNativeTransferAdoption();
+  useMetadataOutboxDrain({ isSignedIn, pubkey, restoring, relayRefresh });
+  useNativeManifestSync({
     files,
+    customFolders,
     isSignedIn,
-    loading,
     pubkey,
     restoring,
     settingsLoaded,
-    hasHydratedIndex,
-  ]);
-
-
-
-  const deleteRemoteBlobs = useCallback(async (file: FileMetadata) => {
-    // One Blossom blob per chunk.
-    const blobHashes = chunkHashes(file.chunks);
-
-    // One auth event covering every blob (chunks + preview), so the user
-    // signs only once per file.
-    const allHashes = file.previewHash
-      ? [...blobHashes, file.previewHash]
-      : blobHashes;
-    // Generous expiration: large chunked files need one DELETE per chunk and
-    // the whole sequence must finish before the auth event expires.
-    const auth = await createAuthEvent(
-      "delete",
-      `Delete ${file.name}`,
-      allHashes,
-      600,
-    );
-
-    const clients = new Map<string, BlossomClient>();
-    const clientFor = (server: string) => {
-      let client = clients.get(server);
-      if (!client) {
-        client = new BlossomClient(server);
-        clients.set(server, client);
-      }
-      return client;
-    };
-
-    // Each blob is deleted independently and best-effort: one failed chunk
-    // must not block the rest, and a blob orphaned on the server is a better
-    // outcome than a partially-deleted file stuck in the index forever.
-    for (let i = 0; i < blobHashes.length; i++) {
-      // Legacy metadata may carry chunks as bare hash strings; only the
-      // object form can override the file's primary server.
-      const chunk = file.chunks?.[i];
-      const server =
-        (typeof chunk === "object" ? chunk.server : undefined) ?? file.server;
-      try {
-        await clientFor(server).delete(blobHashes[i], auth);
-      } catch (e) {
-        console.warn(`Failed to delete blob ${blobHashes[i]} from ${server}`, e);
-      }
-    }
-
-    if (file.previewHash) {
-      try {
-        await clientFor(file.server).delete(file.previewHash, auth);
-      } catch {
-        // Preview deletion failures are non-fatal: the primary blobs are gone
-        // and the preview is unreferenced once the index event is updated.
-      }
-    }
-  }, []);
-
-  const deleteFile = useCallback(
-    async (hash: string) => {
-      const file = files.find((f) => f.id === hash);
-      if (!file) return;
-
-      await deleteRemoteBlobs(file);
-      // deleteFileMetadata (via saveFileMetadata) writes the tombstone
-      // straight into the shared file-index store, which re-emits the
-      // filtered list synchronously — no separate optimistic setFiles needed,
-      // and no risk of it disagreeing with what the store already reflects.
-      await deleteFileMetadata(hash, file);
-    },
-    [files, deleteRemoteBlobs]
-  );
-
-  const deleteFiles = useCallback(
-    async (hashes: string[]) => {
-      const hashSet = new Set(hashes);
-      const targetFiles = files.filter((file) => hashSet.has(file.id));
-
-      for (const file of targetFiles) {
-        // Each successful delete already updates the shared store (see
-        // deleteFile above); on failure, files already deleted this batch
-        // stay deleted — the store reflects that without help from here.
-        await deleteRemoteBlobs(file);
-        await deleteFileMetadata(file.id, file);
-      }
-    },
-    [files, deleteRemoteBlobs]
-  );
-
-  const moveFile = useCallback(
-    async (hash: string, newFolder: string) => {
-      const file = files.find((f) => f.id === hash);
-      if (!file) return;
-
-      const updated: FileMetadata = { ...file, folder: newFolder };
-      // saveFileMetadata writes this straight into the shared file-index
-      // store (synchronously, before its own network publish), which
-      // re-emits the list — no separate optimistic setFiles needed here.
-      await saveFileMetadata(updated);
-    },
-    [files]
-  );
-
-  const moveFiles = useCallback(
-    async (hashes: string[], newFolder: string) => {
-      const hashSet = new Set(hashes);
-      const targetFiles = files.filter((file) => hashSet.has(file.id));
-
-      for (const file of targetFiles) {
-        const updated: FileMetadata = { ...file, folder: newFolder };
-        await saveFileMetadata(updated);
-      }
-    },
-    [files]
-  );
-
-  const renameFile = useCallback(
-    async (hash: string, newName: string) => {
-      const file = files.find((f) => f.id === hash);
-      if (!file) return;
-
-      const updated: FileMetadata = { ...file, name: newName };
-      await saveFileMetadata(updated);
-    },
-    [files]
-  );
-
-  const processPendingImports = useCallback(async () => {
-    if (!isSignedIn || !pubkey || loading || !hasHydratedIndex) {
-      return;
-    }
-
-    if (processingPendingImportsRef.current) {
-      return;
-    }
-
-    processingPendingImportsRef.current = true;
-    try {
-      const pendingImports = await listPendingNativeImports();
-      if (pendingImports.length === 0) {
-        return;
-      }
-
-      for (const pendingImport of pendingImports) {
-        const importPayload = await readPendingNativeImport(pendingImport.id);
-        if (!importPayload) {
-          continue;
-        }
-
-        try {
-          const importedFileBuffer = importPayload.bytes.buffer.slice(
-            importPayload.bytes.byteOffset,
-            importPayload.bytes.byteOffset + importPayload.bytes.byteLength,
-          ) as ArrayBuffer;
-
-          const importedFile = new File([importedFileBuffer], importPayload.name, {
-            type: importPayload.mimeType || "application/octet-stream",
-          });
-
-          // Delete the on-device pending import ONLY after the upload confirms
-          // success. If the upload fails, is cancelled, or the app is killed
-          // before it finishes, the import is retained and retried on the next
-          // launch (at-least-once) rather than being lost. A still-running
-          // upload with the same id dedupes, so re-scanning is safe.
-          queueUpload(importedFile, selectedServer, importPayload.folderPath, {
-            onComplete: () => {
-              void removePendingNativeImport(importPayload.id);
-            },
-          });
-        } catch (pendingError) {
-          console.error("Failed to process pending Android Files import", pendingError);
-          setError(
-            pendingError instanceof Error
-              ? pendingError.message
-              : "Failed to import file saved from Android Files",
-          );
-          continue;
-        }
-      }
-    } finally {
-      processingPendingImportsRef.current = false;
-    }
-  }, [
-    hasHydratedIndex,
-    isSignedIn,
     loading,
+    hasHydratedIndex,
+  });
+  usePendingNativeImports({
+    isSignedIn,
     pubkey,
+    restoring,
+    settingsLoaded,
+    loading,
+    hasHydratedIndex,
     selectedServer,
-  ]);
-
-  useEffect(() => {
-    if (
-      restoring ||
-      !settingsLoaded ||
-      !isSignedIn ||
-      !pubkey ||
-      loading ||
-      !hasHydratedIndex
-    ) {
-      return;
-    }
-
-    void processPendingImports();
-  }, [
-    hasHydratedIndex,
-    isSignedIn,
-    loading,
-    processPendingImports,
-    pubkey,
-    restoring,
-    settingsLoaded,
-  ]);
-
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (
-        document.visibilityState === "visible" &&
-        isSignedIn &&
-        !restoring &&
-        hasHydratedIndex
-      ) {
-        void processPendingImports();
-      }
-    };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () => {
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-    };
-  }, [hasHydratedIndex, isSignedIn, processPendingImports, restoring]);
+    onError: setError,
+  });
 
   // Memoized so the context value's identity only changes when something in
   // it actually changed — otherwise every re-render of this provider (for
