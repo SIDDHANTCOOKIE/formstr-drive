@@ -371,6 +371,12 @@ public class DriveFilesPlugin extends Plugin implements DriveDownloadService.Eve
         String fileName = call.getString("fileName");
         String mimeType = call.getString("mimeType");
         String unencryptedFileHash = call.getString("unencryptedFileHash");
+        String blobHash = call.getString("blobHash");
+        // getData() returns the raw JSObject (a org.json.JSONObject), which
+        // has optLong/optInt directly — avoids PluginCall's Integer-only
+        // numeric getters truncating a >2GB file's size.
+        long size = call.getData().optLong("size", 0L);
+        int chunkSize = call.getData().optInt("chunkSize", 0);
         JSArray chunksArray = call.getArray("chunks");
 
         // Chunks arrive as `{ hash, server? }` objects so per-chunk routing
@@ -389,10 +395,16 @@ public class DriveFilesPlugin extends Plugin implements DriveDownloadService.Eve
         intent.putExtra(DriveDownloadService.EXTRA_ENCRYPTION_KEY, encryptionKey);
         intent.putExtra(DriveDownloadService.EXTRA_FILE_NAME, fileName);
         intent.putExtra(DriveDownloadService.EXTRA_MIME_TYPE, mimeType);
+        intent.putExtra(DriveDownloadService.EXTRA_SIZE, size);
         if (unencryptedFileHash != null && !unencryptedFileHash.isEmpty()) {
             intent.putExtra(DriveDownloadService.EXTRA_UNENCRYPTED_FILE_HASH, unencryptedFileHash);
         }
-        if (chunksJson != null) {
+        if (blobHash != null && !blobHash.isEmpty()) {
+            // NIP-FS single-blob file — chunkSize travels alongside it;
+            // chunksJson is never sent for this shape.
+            intent.putExtra(DriveDownloadService.EXTRA_BLOB_HASH, blobHash);
+            intent.putExtra(DriveDownloadService.EXTRA_CHUNK_SIZE, chunkSize);
+        } else if (chunksJson != null) {
             intent.putExtra(DriveDownloadService.EXTRA_CHUNKS_JSON, chunksJson);
         }
 
