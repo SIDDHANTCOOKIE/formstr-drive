@@ -372,11 +372,10 @@ public class DriveFilesPlugin extends Plugin implements DriveDownloadService.Eve
         String mimeType = call.getString("mimeType");
         String unencryptedFileHash = call.getString("unencryptedFileHash");
         String blobHash = call.getString("blobHash");
-        // getData() returns the raw JSObject (a org.json.JSONObject), which
-        // has optLong/optInt directly — avoids PluginCall's Integer-only
-        // numeric getters truncating a >2GB file's size.
-        long size = call.getData().optLong("size", 0L);
-        int chunkSize = call.getData().optInt("chunkSize", 0);
+        // getLong avoids getInt's 32-bit range, which a >2GB file's size
+        // could exceed.
+        long size = call.getLong("size", 0L);
+        int chunkSize = call.getInt("chunkSize", 0);
         JSArray chunksArray = call.getArray("chunks");
 
         // Chunks arrive as `{ hash, server? }` objects so per-chunk routing
