@@ -84,6 +84,11 @@ type DriveFilesPlugin = {
   saveToDownloads(options: { base64: string; fileName: string; mimeType: string }): Promise<{ uri: string }>;
   downloadToDownloads(options: {
     server: string;
+    /** NIP-FS single-blob file: present together, absent on legacy files
+     *  (which carry `chunks` instead — see types/metadata.ts's
+     *  isLegacyBlobFormat). */
+    blobHash?: string;
+    chunkSize?: number;
     chunks?: ChunkRef[];
     correlationId: string;
     encryptionKey: string;
@@ -154,6 +159,11 @@ export interface NativeDriveFileEntry {
   encryptionKey: string;
   previewHash?: string;
   unencryptedFileHash?: string;
+  /** NIP-FS single-blob file: present together, absent on legacy files
+   *  (which carry `chunks` instead — see types/metadata.ts's
+   *  isLegacyBlobFormat). */
+  blobHash?: string;
+  chunkSize?: number;
   chunks?: ChunkRef[];
 }
 
@@ -315,6 +325,9 @@ export function buildNativeDriveManifest(
       encryptionKey: file.encryptionKey,
       ...(file.previewHash ? { previewHash: file.previewHash } : {}),
       ...(file.unencryptedFileHash ? { unencryptedFileHash: file.unencryptedFileHash } : {}),
+      ...(file.blobHash && file.chunkSize
+        ? { blobHash: file.blobHash, chunkSize: file.chunkSize }
+        : {}),
       ...(file.chunks ? { chunks: resolveChunks(file.chunks, file.server) } : {}),
     };
   });
@@ -474,6 +487,9 @@ async function ensureNativeListeners() {
 export async function downloadFileToDownloads(
   file: {
     server: string;
+    /** NIP-FS single-blob file: present together, absent on legacy files. */
+    blobHash?: string;
+    chunkSize?: number;
     chunks?: ChunkRef[];
     encryptionKey: string;
     unencryptedFileHash?: string;
@@ -504,10 +520,14 @@ export async function downloadFileToDownloads(
     // real download while the native foreground service kept running headless.
     return await plugin.downloadToDownloads({
       server: file.server,
-      // Resolved per-chunk servers, so a chunk that fell back during upload is
-      // fetched from where it actually lives (mirrors resolveChunks usage in
-      // services/downloadFile.ts).
-      chunks: resolveChunks(file.chunks, file.server),
+      ...(file.blobHash && file.chunkSize
+        ? { blobHash: file.blobHash, chunkSize: file.chunkSize }
+        : {
+            // Resolved per-chunk servers, so a chunk that fell back during
+            // upload is fetched from where it actually lives (mirrors
+            // resolveChunks usage in services/downloadFile.ts).
+            chunks: resolveChunks(file.chunks, file.server),
+          }),
       correlationId,
       encryptionKey: file.encryptionKey,
       ...(file.unencryptedFileHash ? { unencryptedFileHash: file.unencryptedFileHash } : {}),
