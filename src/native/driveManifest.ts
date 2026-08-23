@@ -575,16 +575,24 @@ export async function startNativeUploadService(uploadId: string, fileName: strin
 const STAGE_SLICE_BYTES = 3 * 1024 * 1024;
 
 /**
- * Writes one pre-encrypted upload blob (a chunk or the preview) to
- * app-private storage so the native upload worker can PUT it without any
- * JS/crypto involvement. Called during the foreground prepare phase, one
- * chunk at a time, and streamed in slices so peak memory stays bounded.
+ * Writes one pre-encrypted upload segment to app-private storage so the
+ * native upload worker can PUT it without any JS/crypto involvement. Called
+ * during the foreground prepare phase, one segment at a time, and streamed
+ * in slices so peak memory stays bounded.
+ *
+ * NIP-FS concatenates every segment into a single blob, so a whole file's
+ * worth of segments share one `index` (its destination) — the caller passes
+ * `appendToPrevious: true` for every segment after the first at that index,
+ * so each one's slices land after the previous segment's rather than
+ * truncating it. The preview, which is its own separate blob, uses a
+ * different `index` and the default `appendToPrevious: false`.
  */
 export async function stageNativeUploadChunk(
   uploadId: string,
   index: number,
   bytes: Uint8Array,
   signal?: AbortSignal,
+  appendToPrevious = false,
 ): Promise<string> {
   if (!isAndroidPlatform || !driveFilesPlugin) {
     throw new Error("Native upload staging is only available on Android");
@@ -601,9 +609,12 @@ export async function stageNativeUploadChunk(
       uploadId,
       index,
       base64: uint8ArrayToBase64(slice),
-      // The first slice truncates, so a retry of the same index never appends
-      // onto a partial file left by a previous attempt.
-      append: offset > 0,
+      // The very first slice of the very first segment at this index
+      // truncates, so a retry of the same upload never appends onto a
+      // partial file left by a previous attempt. Every other slice —
+      // whether continuing this segment or starting a later one at the same
+      // index — appends.
+      append: appendToPrevious || offset > 0,
     });
     path = result.path;
   }
