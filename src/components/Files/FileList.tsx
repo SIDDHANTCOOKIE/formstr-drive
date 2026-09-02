@@ -16,6 +16,7 @@ export function FileList() {
     currentFolder,
     setCurrentFolder,
     keyReady,
+    hasHydratedIndex,
     deleteFiles,
     moveFiles,
   } = useFileIndex();
@@ -325,10 +326,24 @@ export function FileList() {
         </div>
 
         {!hasItems ? (
-          <div className="empty-state">
-            <p>{normalizedQuery ? "No files or folders match your search" : "No files or folders in this folder"}</p>
-            <p className="empty-hint">{!normalizedQuery && "Drop files above to upload"}</p>
-          </div>
+          // A cold local cache (new device/browser, private window) has to wait
+          // on a real relay round-trip before the file index's own EOSE fires
+          // (hasHydratedIndex) — keyReady alone resolves fast (often from a
+          // local signer/cache) and says nothing about whether the index has
+          // actually finished syncing. Without this check, that in-flight sync
+          // was pixel-identical to a genuinely empty drive, which read as data
+          // loss rather than "still loading" on anything but a warm cache.
+          !hasHydratedIndex && !normalizedQuery ? (
+            <div className="loading-container">
+              <div className="loading-state">Syncing your files...</div>
+              <div className="loader"></div>
+            </div>
+          ) : (
+            <div className="empty-state">
+              <p>{normalizedQuery ? "No files or folders match your search" : "No files or folders in this folder"}</p>
+              <p className="empty-hint">{!normalizedQuery && "Drop files above to upload"}</p>
+            </div>
+          )
         ) : (
           <div className={isGridView ? "file-grid" : "file-list-view"}>
             {currentFolders.map((folderPath) => {
