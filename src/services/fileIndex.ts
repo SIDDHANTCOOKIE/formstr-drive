@@ -207,6 +207,13 @@ export function observeFileIndex(
         if (stopped) return;
         enqueue(async () => {
           eosed = true;
+          // The success path here was previously silent — the only console
+          // signal was a per-event debug line on decrypt failure, so "did the
+          // relay sync actually run" was indistinguishable from "the drive is
+          // just empty" without opening the network tab. That ambiguity is
+          // what made a real drive-key/relay-connectivity incident initially
+          // look like a display bug.
+          console.log(`[FileIndex] Relay sync complete for [${pubkey}] — ${entries.size} event(s) known.`);
           emitFiles();
           emitLegacy();
           handlers.onReady?.();
@@ -298,6 +305,13 @@ export function extractFolders(files: FileMetadata[]): string[] {
   folders.add("/");
 
   for (const file of files) {
+    // `folder` is typed as required, but a real decrypted event can lack it
+    // (predates the field, or is otherwise malformed) despite having a valid
+    // id. Uncaught, `.split` on undefined throws inside the render-time
+    // useMemo that calls this function, which blanks the entire app rather
+    // than just this one file's folder — reported from production. Treat a
+    // missing folder as root instead of crashing the whole list over it.
+    if (!file.folder) continue;
     const parts = file.folder.split("/").filter(Boolean);
     let current = "";
     for (const part of parts) {
