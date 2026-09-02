@@ -144,13 +144,28 @@ export interface FileIndexStreamHandlers {
    */
   onReady?: () => void;
   /**
-   * The Drive Key keyring has resolved (or failed — either way, we're no
-   * longer blocked on it) — fires as soon as `driveKeysPromise` settles,
-   * independent of any subscription's EOSE. This is the ONLY thing the file
-   * list UI should block on: once the key is ready, files should render as
-   * they stream in via `onFiles`, not wait for the full replay to finish.
+   * Fires once the Drive Key keyring attempt settles — success or failure,
+   * we're no longer blocked on it — reporting whether it actually produced
+   * at least one usable key. `hasKeys: false` covers BOTH a genuine failure
+   * and a keyring that resolved successfully but empty; either way there is
+   * no key to decrypt with, so a subsequently-empty `onFiles` result must
+   * NOT be read as "confirmed empty" — see identityHistory.ts for how a
+   * caller should tell a genuinely new identity apart from one whose key
+   * just couldn't be resolved this time. (Previously this fired unconditionally
+   * once the promise settled either way, with no way to tell which case
+   * happened — the keyring's own `.catch` silently turned a failure into an
+   * empty array, so "resolved to nothing" and "resolved with real keys" were
+   * indistinguishable to every caller.)
    */
-  onKeyReady?: () => void;
+  onKeyStatus?: (hasKeys: boolean) => void;
+  /**
+   * Fires (at most once per EOSE) when at least one event under the
+   * currently-subscribed authors failed to decrypt. An empty file list
+   * alongside this is a strong signal the WRONG drive key is subscribed —
+   * files exist but are unreadable — as opposed to the drive being
+   * genuinely empty.
+   */
+  onDecryptFailures?: (count: number) => void;
 }
 
 /**
@@ -174,11 +189,13 @@ export function observeFileIndex(
       return [];
     },
   );
-  // Fire onKeyReady the moment the keyring settles — success or failure, we're
-  // no longer blocked on it. Not gated on `stopped`: callers may want to know
-  // the key resolved even if the component unmounted a moment later, and
-  // firing this has no side effect beyond the callback itself.
-  void driveKeysPromise.then(() => handlers.onKeyReady?.());
+  // Report the moment the keyring settles — success or failure, we're no
+  // longer blocked on it — but unlike before, report WHETHER it actually
+  // resolved to usable keys rather than firing unconditionally. Not gated on
+  // `stopped`: callers may want to know the key resolved even if the
+  // component unmounted a moment later, and firing this has no side effect
+  // beyond the callback itself.
+  void driveKeysPromise.then((keys) => handlers.onKeyStatus?.(keys.length > 0));
 
   let stopped = false;
 
@@ -287,6 +304,7 @@ export function observeFileIndex(
                     `[${Array.from(subscribedAuthors).join(", ")}] — an empty or incomplete drive ` +
                     `may mean the wrong Drive Key is subscribed, not that the drive is actually empty.`,
                 );
+                handlers.onDecryptFailures?.(skippedCount);
               }
             });
           },

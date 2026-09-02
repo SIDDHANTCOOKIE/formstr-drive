@@ -30,6 +30,49 @@ import { useTransferExitWarning } from "../hooks/useTransferExitWarning";
 // Re-export type if needed anywhere else
 export type { FileMetadata };
 
+/**
+ * Replaces three independent booleans (`loading`, `hasHydratedIndex`,
+ * `keyReady`) that used to have to be combined in the right order to reach a
+ * correct conclusion — nothing enforced that order, and the wrong one is
+ * exactly what let a failed Drive Key resolution silently read as "confirmed
+ * empty drive" (see the WARNING doc below). This union makes the two
+ * findings the DriveState below reflects unrepresentable by mistake:
+ *
+ *  - "resolving": not enough is known yet to render either files or an
+ *    empty-drive conclusion. The UI should show a loading state, full stop.
+ *  - "degraded": we have SOME information (`files` may be non-empty from a
+ *    partial replay) but cannot currently vouch for completeness — see
+ *    `DriveIndexDegradedReason`. An EMPTY `files` here must never be shown
+ *    as "no files exist"; it means "couldn't confirm".
+ *  - "ready": `files` is the confirmed, complete current list. An empty
+ *    array here is a genuine, trustworthy empty drive.
+ */
+export type DriveIndexStatus = "resolving" | "degraded" | "ready";
+
+/**
+ * Why `status` is "degraded" — always paired with `status`, never read alone.
+ *  - "keys-unavailable": the Drive Key keyring failed to resolve, or
+ *    resolved to zero usable keys. Previously this was silently swallowed
+ *    into an empty keyring (`getDriveConversationKeys().catch(() => [])`
+ *    in fileIndex.ts), which then produced an empty — and entirely
+ *    believable — file list. This is the exact gap the mint-hazard
+ *    incident exposed.
+ *  - "undecryptable": the keyring resolved with keys, replay finished, but
+ *    at least one file-index event failed to decrypt under it while the
+ *    file list came back empty — the signature of the WRONG (but
+ *    successfully-resolved) key being active, not of an empty drive.
+ *
+ * Deliberately NOT included: "identity has no prior history" as a reason to
+ * distrust an empty list. That signal (identityHistory.ts) answers "should
+ * we ever mint a replacement key" correctly, but it is too coarse for this
+ * decision — an identity that has published a Drive Key event but never
+ * uploaded a single file is `existing` by that check and STILL has a
+ * genuinely, correctly empty drive. Using it here would flag every
+ * brand-new user's real empty state as suspicious the moment their own
+ * key-creation event round-trips back to them.
+ */
+export type DriveIndexDegradedReason = "keys-unavailable" | "undecryptable";
+
 export interface FileIndexContextType {
   files: FileMetadata[];
   folders: string[];
@@ -37,12 +80,9 @@ export interface FileIndexContextType {
   addCustomFolder: (path: string) => void;
   currentFolder: string;
   setCurrentFolder: (folder: string) => void;
-  loading: boolean;
-  hasHydratedIndex: boolean;
-  /** True once the Drive Key is ready — the file list UI should gate only on
-   *  this, rendering `files` as they stream in rather than waiting for
-   *  hasHydratedIndex (full replay). */
-  keyReady: boolean;
+  driveStatus: DriveIndexStatus;
+  /** Non-null exactly when `driveStatus === "degraded"`. */
+  degradedReason: DriveIndexDegradedReason | null;
   error: string | null;
   deleteFile: (hash: string) => Promise<void>;
   deleteFiles: (hashes: string[]) => Promise<void>;
@@ -60,20 +100,48 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
 
   const [files, setFiles] = useState<FileMetadata[]>([]);
   const [currentFolder, setCurrentFolder] = useState("/");
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [customFolders, setCustomFolders] = useState<string[]>([]);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
-  const [hasHydratedIndex, setHasHydratedIndex] = useState(false);
-  // True once the Drive Key keyring has resolved (or definitively failed) —
-  // fires well before hasHydratedIndex (which waits for the full relay
-  // replay/EOSE). The file list UI should only block on this: once the key
-  // is ready, files render as they stream in via onFiles rather than waiting
-  // for the whole index to finish hydrating. hasHydratedIndex keeps its
-  // existing meaning for the things that genuinely need a complete picture
-  // (pending-import processing, native manifest sync) — unaffected by this.
-  const [keyReady, setKeyReady] = useState(false);
+
+  // The three raw signals driveStatus is computed from. None of these is
+  // meaningful read alone — that was the problem with the flags they
+  // replace — so nothing outside the useMemo below should read them
+  // directly; everything downstream consumes `driveStatus`/`degradedReason`.
+  //
+  // null = "the keyring attempt has not settled yet" (distinct from `false`,
+  // which is a confirmed empty/failed resolution — see onKeyStatus below).
+  const [hasKeys, setHasKeys] = useState<boolean | null>(null);
+  // True once at least one EOSE has been received for the current
+  // subscription — the local relay's cache-or-network replay is done.
+  const [hydrated, setHydrated] = useState(false);
+  // True once at least one file-index event under the current keyring
+  // failed to decrypt. Reset per subscription (sign-in / relay refresh /
+  // manual refresh), not per-file, since it is evidence about the KEYRING,
+  // not about any specific file.
+  const [hadDecryptFailures, setHadDecryptFailures] = useState(false);
+
   const [manualRefreshCount, setManualRefreshCount] = useState(0);
+
+  // The single source of truth every consumer must use instead of combining
+  // the three raw signals above by hand — see DriveIndexStatus's doc comment
+  // for what each branch means and why identityHistory is deliberately NOT
+  // consulted here (it is the right signal for driveKey.ts's mint decision,
+  // and the wrong one for this: an existing identity's genuinely-empty
+  // drive must never be flagged as suspicious just because that identity
+  // has published something, anything, before).
+  const { driveStatus, degradedReason } = useMemo<{
+    driveStatus: DriveIndexStatus;
+    degradedReason: DriveIndexDegradedReason | null;
+  }>(() => {
+    if (hasKeys === null) return { driveStatus: "resolving", degradedReason: null };
+    if (!hasKeys) return { driveStatus: "degraded", degradedReason: "keys-unavailable" };
+    if (!hydrated) return { driveStatus: "resolving", degradedReason: null };
+    if (files.length === 0 && hadDecryptFailures) {
+      return { driveStatus: "degraded", degradedReason: "undecryptable" };
+    }
+    return { driveStatus: "ready", degradedReason: null };
+  }, [hasKeys, hydrated, hadDecryptFailures, files.length]);
 
   // Bumps when the relay worker can newly serve cached data it couldn't a
   // moment ago (IndexedDB hydration finished, or the worker restarted after a
@@ -128,21 +196,24 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
       // files replayed immediately on subscribe.
       clearFileIndexStore();
       setFiles([]);
-      setHasHydratedIndex(false);
-      setKeyReady(false);
+      setHasKeys(null);
+      setHydrated(false);
+      setHadDecryptFailures(false);
       return;
     }
 
-    setLoading(true);
+    // Fresh subscription: none of the three raw signals from a previous
+    // identity/subscription is valid evidence about this one.
+    setHasKeys(null);
+    setHydrated(false);
+    setHadDecryptFailures(false);
     setError(null);
 
     const unobserve = observeFileIndex(pubkey, {
       onFiles: setFiles,
-      onKeyReady: () => setKeyReady(true),
-      onReady: () => {
-        setHasHydratedIndex(true);
-        setLoading(false);
-      },
+      onKeyStatus: setHasKeys,
+      onReady: () => setHydrated(true),
+      onDecryptFailures: () => setHadDecryptFailures(true),
     });
 
     return unobserve;
@@ -168,16 +239,14 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
     pubkey,
     restoring,
     settingsLoaded,
-    loading,
-    hasHydratedIndex,
+    indexReady: driveStatus === "ready",
   });
   usePendingNativeImports({
     isSignedIn,
     pubkey,
     restoring,
     settingsLoaded,
-    loading,
-    hasHydratedIndex,
+    indexReady: driveStatus === "ready",
     selectedServer,
     onError: setError,
   });
@@ -194,9 +263,8 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
       addCustomFolder,
       currentFolder,
       setCurrentFolder,
-      loading,
-      hasHydratedIndex,
-      keyReady,
+      driveStatus,
+      degradedReason,
       error,
       deleteFile,
       deleteFiles,
@@ -211,9 +279,8 @@ export function FileIndexProvider({ children }: { children: ReactNode }) {
       customFolders,
       addCustomFolder,
       currentFolder,
-      loading,
-      hasHydratedIndex,
-      keyReady,
+      driveStatus,
+      degradedReason,
       error,
       deleteFile,
       deleteFiles,

@@ -11,8 +11,9 @@ interface PendingNativeImportsOptions {
   pubkey: string | undefined;
   restoring: boolean;
   settingsLoaded: boolean;
-  loading: boolean;
-  hasHydratedIndex: boolean;
+  /** True only once the file index is fully trustworthy (driveStatus ===
+   *  "ready" in FileIndexProvider). */
+  indexReady: boolean;
   selectedServer: string;
   onError: (message: string) => void;
 }
@@ -31,15 +32,14 @@ export function usePendingNativeImports({
   pubkey,
   restoring,
   settingsLoaded,
-  loading,
-  hasHydratedIndex,
+  indexReady,
   selectedServer,
   onError,
 }: PendingNativeImportsOptions): void {
   const processingRef = useRef(false);
 
   const processPendingImports = useCallback(async () => {
-    if (!isSignedIn || !pubkey || loading || !hasHydratedIndex) {
+    if (!isSignedIn || !pubkey || !indexReady) {
       return;
     }
 
@@ -88,7 +88,7 @@ export function usePendingNativeImports({
     } finally {
       processingRef.current = false;
     }
-  }, [hasHydratedIndex, isSignedIn, loading, onError, pubkey, selectedServer]);
+  }, [indexReady, isSignedIn, onError, pubkey, selectedServer]);
 
   useEffect(() => {
     if (
@@ -96,17 +96,15 @@ export function usePendingNativeImports({
       !settingsLoaded ||
       !isSignedIn ||
       !pubkey ||
-      loading ||
-      !hasHydratedIndex
+      !indexReady
     ) {
       return;
     }
 
     void processPendingImports();
   }, [
-    hasHydratedIndex,
+    indexReady,
     isSignedIn,
-    loading,
     processPendingImports,
     pubkey,
     restoring,
@@ -119,7 +117,7 @@ export function usePendingNativeImports({
         document.visibilityState === "visible" &&
         isSignedIn &&
         !restoring &&
-        hasHydratedIndex
+        indexReady
       ) {
         void processPendingImports();
       }
@@ -129,5 +127,5 @@ export function usePendingNativeImports({
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [hasHydratedIndex, isSignedIn, processPendingImports, restoring]);
+  }, [indexReady, isSignedIn, processPendingImports, restoring]);
 }

@@ -15,10 +15,11 @@ export function FileList() {
     folders,
     currentFolder,
     setCurrentFolder,
-    keyReady,
-    hasHydratedIndex,
+    driveStatus,
+    degradedReason,
     deleteFiles,
     moveFiles,
+    refresh,
   } = useFileIndex();
   const toast = useToast();
   const [searchQuery, setSearchQuery] = useState("");
@@ -255,10 +256,12 @@ export function FileList() {
     </div>
   );
 
-  // Only the Drive Key needs to be ready to start rendering — files then
-  // populate progressively via the standing file-index subscription as each
-  // one decrypts, rather than blocking behind the full replay (hasHydratedIndex).
-  if (!keyReady) {
+  // "resolving" covers both "keyring not settled yet" and "settled, but the
+  // relay replay hasn't EOSE'd" — on a warm cache the latter fires almost
+  // instantly, so this stays as responsive as the old keyRead-only gate did
+  // in the common case, while never rendering content ahead of having
+  // enough information to know whether it's complete.
+  if (driveStatus === "resolving") {
     return (
       <div className="loading-container">
         <div className="loading-state">Hold tight while we are fetching your files...</div>
@@ -326,17 +329,28 @@ export function FileList() {
         </div>
 
         {!hasItems ? (
-          // A cold local cache (new device/browser, private window) has to wait
-          // on a real relay round-trip before the file index's own EOSE fires
-          // (hasHydratedIndex) — keyReady alone resolves fast (often from a
-          // local signer/cache) and says nothing about whether the index has
-          // actually finished syncing. Without this check, that in-flight sync
-          // was pixel-identical to a genuinely empty drive, which read as data
-          // loss rather than "still loading" on anything but a warm cache.
-          !hasHydratedIndex && !normalizedQuery ? (
-            <div className="loading-container">
-              <div className="loading-state">Syncing your files...</div>
-              <div className="loader"></div>
+          // driveStatus is "resolving" only before the early return above, so
+          // this only ever sees "degraded" or "ready" — an empty list is safe
+          // to call genuinely empty ONLY under "ready". Under "degraded", an
+          // empty `files` means "couldn't confirm", never "confirmed empty"
+          // (see DriveIndexStatus's doc comment in FileIndexProvider.tsx) —
+          // showing the upload-hint empty state here is exactly the bug that
+          // made a real drive-key/decrypt failure look like ordinary data loss.
+          degradedReason && !normalizedQuery ? (
+            <div className="empty-state error-state">
+              <p>
+                {degradedReason === "keys-unavailable"
+                  ? "Couldn't load your Drive Key, so this may not be your complete file list."
+                  : "Some of your files couldn't be decrypted under the current Drive Key — this may " +
+                    "not be your complete file list."}
+              </p>
+              <p className="empty-hint">
+                Check your connection and retry, or use Import Drive Key from the account menu if you
+                have an existing key.
+              </p>
+              <button className="empty-state-retry" onClick={() => void refresh()}>
+                Retry
+              </button>
             </div>
           ) : (
             <div className="empty-state">

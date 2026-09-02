@@ -9,6 +9,7 @@ import {
   STORAGE_KEYS,
 } from "../utils/persistence";
 import type { NostrEvent } from "../types/metadata";
+import { establishIdentityHistory } from "./identityHistory";
 
 const METADATA_KIND = 34578;
 const HEX_64 = /^[0-9a-fA-F]{64}$/;
@@ -264,14 +265,19 @@ async function decryptDriveKeyPayload(
  * Collect every Drive Key event for the user via the local relay.
  *
  * A warm local cache resolves instantly at EOSE (cache replay done). On an
- * empty cache we hold the interest open for a network window; when it closes
- * with nothing found we consult `relayHealth()` to tell "relays reachable, no
- * key exists" apart from "offline" — the local relay's EOSE only covers the
- * cache, not the upstream sync — so we never prompt an existing user to
- * overwrite their key just because they're offline.
+ * empty cache we hold the interest open for a network window and then give
+ * up with whatever was found — including nothing. This function makes NO
+ * claim about whether "nothing found" means "confirmed absent" or "couldn't
+ * reach it": that used to be guessed here from relay-connection counts,
+ * which is exactly the kind of inference that caused the mint hazard this
+ * module now guards against (see restoreDriveKey's doc comment). The
+ * authoritative answer to "does a key actually exist for this identity" now
+ * comes from {@link establishIdentityHistory} at the one call site
+ * (buildDriveKeyring) that needs to make a mint-or-not decision — this
+ * function's only job is fetching, not judging.
  */
 async function fetchDriveKeyEvents(pubkey: string): Promise<NostrEvent[]> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     let settled = false;
     const found = new Map<string, NostrEvent>();
 
@@ -299,59 +305,12 @@ async function fetchDriveKeyEvents(pubkey: string): Promise<NostrEvent[]> {
       },
     );
 
-    // Safety timeout — flaky mobile relays get a generous window. Widened
-    // from 8s: that window was itself observed too short to survive a real
-    // multi-relay outage (six configured relays failing to connect within
-    // it), which is exactly the condition this timeout's fallback logic
-    // below exists to distinguish from "no key was ever published".
+    // Safety timeout — flaky mobile relays get a generous window.
     setTimeout(() => {
-      void (async () => {
-        if (settled) return;
-        settled = true;
-        handle.unobserve();
-
-        if (found.size > 0) {
-          resolve(sortNewestFirst([...found.values()]));
-          return;
-        }
-
-        try {
-          const health = await dataLayer.relayHealth();
-          // A single connected relay isn't enough evidence: the Drive Key
-          // event lives on whichever relays happened to accept it, and if
-          // that's a relay we're NOT currently connected to, one healthy
-          // connection elsewhere would look identical to "no key exists" —
-          // which is exactly the failure mode that leads to a second key
-          // being minted on top of a perfectly good one. Because the Drive Key
-          // event is a replaceable kind (one per identity, per relay),
-          // publishing that second key erases the first everywhere it lands —
-          // so require the network to look real before treating an empty
-          // result as trustworthy.
-          //
-          // `online()` is checked alongside the count because `relayHealth()`
-          // reports each socket's own connected/disconnected state, which can
-          // be stale relative to actual current reachability (a socket can
-          // report "connected" briefly after the underlying network has
-          // already dropped) — online() is the data layer's own debounced
-          // judgment of current reachability and is a cheap, independent
-          // second signal to require alongside the raw count.
-          const connectedCount = health.filter((r) => r.connected).length;
-          if (connectedCount >= 2 && (await dataLayer.online())) {
-            // Reachable across multiple relays, still nothing published: a
-            // genuine first-time user.
-            resolve([]);
-            return;
-          }
-        } catch {
-          // Health probe failed — treat as offline below.
-        }
-
-        reject(
-          new Error(
-            "Network timeout: could not reach relays to fetch your Drive Key. Please check your connection.",
-          ),
-        );
-      })();
+      if (settled) return;
+      settled = true;
+      handle.unobserve();
+      resolve(sortNewestFirst([...found.values()]));
     }, 20000);
   });
 }
@@ -512,7 +471,7 @@ async function buildDriveKeyring(): Promise<DriveKeyEntry[]> {
 
   // --- 2. Reconcile with relays -------------------------------------------
   const syncWithRelays = async () => {
-    const events = await fetchDriveKeyEvents(pubkey); // rejects if offline
+    const events = await fetchDriveKeyEvents(pubkey); // never rejects — may resolve empty
 
     for (const event of events) {
       rememberPayload(event.content, event.created_at);
@@ -545,32 +504,35 @@ async function buildDriveKeyring(): Promise<DriveKeyEntry[]> {
         );
       }
 
-      // A cached drive pubkey is proof THIS device has seen a real key for
-      // this identity before — from an earlier session, possibly written by
-      // an older/incompatible build. Relays returning nothing right now is
-      // far more likely a transient outage (this repo has direct evidence of
-      // one: every configured relay unreachable at once from one machine)
-      // than every relay having simultaneously forgotten a replaceable event
-      // that definitely existed. Minting here would still destroy it, so this
-      // is refused outright rather than left to the timing-based network
-      // check below — no amount of "relays looked healthy" evidence should
-      // override a device's own memory that a key exists.
-      const previouslySeenDrivePubkeys = await getCachedDrivePubkeys(pubkey);
-      if (previouslySeenDrivePubkeys.length > 0) {
+      // No Drive Key event was found at all — but that alone still isn't
+      // proof this is a first-time user; it's equally what "the network
+      // couldn't answer" looks like. Ask the one question that actually has
+      // a positive answer: has this IDENTITY (not this specific event kind)
+      // ever published anything? A used identity always has SOMETHING
+      // (profile, contacts, relay list, or this app's own drive metadata),
+      // independent of whether the Drive Key specifically could be found —
+      // so this can't be fooled by the same failure mode (a payload/kind
+      // this build doesn't recognize) that caused the original incident.
+      // See identityHistory.ts for the full reasoning and why "unknown" must
+      // never be treated as "new".
+      const identityHistory = await establishIdentityHistory(pubkey);
+      if (identityHistory !== "new") {
         throw new Error(
-          "This device has a Drive Key on record for this account, but the relays didn't return it " +
-            "just now (likely a network issue). Refusing to create a new key, since that would " +
-            "permanently replace the existing one. Please check your connection and try again, or use " +
-            "Import Drive Key with your existing secret.",
+          identityHistory === "existing"
+            ? "This account has used Nostr before, but no Drive Key could be found for it. Creating a " +
+                "new one would risk destroying an existing key if one exists. Please check your " +
+                "connection and try again, or use Import Drive Key with your existing secret."
+            : "Could not reach enough relays to tell whether this account already has a Drive Key. " +
+                "Refusing to create one, since that could permanently destroy an existing key. Please " +
+                "check your connection and try again.",
         );
       }
 
       const confirmMessage =
-        "Drive key not found in relays. Do you want to create a new key?\n\n" +
-        "WARNING: creating a new key REPLACES your Drive Key everywhere it's published — this is a " +
-        "one-per-account, replaceable event. If you've used Drive on another device or the website " +
-        "before, that device's files will become permanently unreachable unless you Import Drive Key " +
-        "with your existing secret instead of creating a new one.";
+        "No Drive Key found, and this looks like a new account — create one now?\n\n" +
+        "Note: creating a key REPLACES your Drive Key everywhere it's published (one per account, " +
+        "replaceable). If you've actually used Drive before and see this by mistake, use Import Drive " +
+        "Key with your existing secret instead.";
       if (!window.confirm(confirmMessage)) {
         throw new Error("User cancelled drive key creation.");
       }
@@ -591,8 +553,10 @@ async function buildDriveKeyring(): Promise<DriveKeyEntry[]> {
       console.warn("[DriveKey] Background relay sync failed", e),
     );
   } else {
-    // Cold cache: we must wait for relays to give us the key, tell us there is
-    // none (first-time user), or fail (offline -> throws, no prompt).
+    // Cold cache: we must wait for relays to give us the key, confirm via
+    // identityHistory that this is genuinely a first-time user, or throw
+    // (unreachable network, or an existing-but-unreadable key — either way,
+    // no prompt).
     await syncWithRelays();
   }
 

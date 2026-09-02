@@ -12,10 +12,12 @@ interface NativeManifestSyncOptions {
   pubkey: string | undefined;
   restoring: boolean;
   settingsLoaded: boolean;
-  loading: boolean;
-  /** Gates on the FULL replay, not just the Drive Key: publishing a partial
-   *  file list would make the Files app briefly show a half-empty drive. */
-  hasHydratedIndex: boolean;
+  /** True only once the file index is fully trustworthy (driveStatus ===
+   *  "ready" in FileIndexProvider) — gating on this, not just the Drive Key
+   *  resolving, means publishing a partial or wrongly-empty file list can
+   *  never make the Files app briefly show a half-empty (or falsely empty)
+   *  drive. */
+  indexReady: boolean;
 }
 
 /**
@@ -31,8 +33,7 @@ export function useNativeManifestSync({
   pubkey,
   restoring,
   settingsLoaded,
-  loading,
-  hasHydratedIndex,
+  indexReady,
 }: NativeManifestSyncOptions): void {
   useEffect(() => {
     if (restoring) {
@@ -52,8 +53,7 @@ export function useNativeManifestSync({
       !settingsLoaded ||
       !isSignedIn ||
       !pubkey ||
-      loading ||
-      !hasHydratedIndex
+      !indexReady
     ) {
       return;
     }
@@ -65,10 +65,9 @@ export function useNativeManifestSync({
     customFolders,
     files,
     isSignedIn,
-    loading,
+    indexReady,
     pubkey,
     restoring,
     settingsLoaded,
-    hasHydratedIndex,
   ]);
 }
