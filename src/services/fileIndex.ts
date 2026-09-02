@@ -267,6 +267,15 @@ export function observeFileIndex(
             if (stopped) return;
             enqueue(async () => {
               fileIndexStore.refresh();
+              // The success path was previously silent — the only console
+              // signal was a warning on decrypt failure, so "did the relay
+              // sync actually run" was indistinguishable from "the drive is
+              // just empty" without opening the network tab. This fires once
+              // per author batch's first EOSE (readyFired below still guards
+              // onReady from firing more than once for the whole subscription).
+              console.log(
+                `[FileIndex] Relay sync complete for [${Array.from(subscribedAuthors).join(", ")}].`,
+              );
               if (!readyFired) {
                 readyFired = true;
                 handlers.onReady?.();
@@ -380,6 +389,14 @@ export function extractFolders(files: FileMetadata[]): string[] {
   folders.add("/");
 
   for (const file of files) {
+    // `folder: string` is only a TS-level promise — a real decrypted event
+    // from before this field existed (or any malformed metadata) can lack
+    // it despite having a valid `id` and passing isLegacyFile. Uncaught, this
+    // throws inside the render-time useMemo that calls this function
+    // (FileIndexProvider's `folders`), which blanks the entire app rather
+    // than just this one file's folder — so this file is treated as living
+    // at the root instead of crashing the whole list over one bad event.
+    if (!file.folder) continue;
     const parts = file.folder.split("/").filter(Boolean);
     let current = "";
     for (const part of parts) {

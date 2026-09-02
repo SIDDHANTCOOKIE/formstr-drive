@@ -140,6 +140,13 @@ const driveFilesPlugin = isAndroidPlatform
   : null;
 
 export function normalizeFolderPath(path: string): string {
+  // `folder: string` is only a TS-level promise (see FileMetadata's
+  // isLegacyFile comment) — a real decrypted event predating this field, or
+  // any malformed metadata, can pass `file.folder` through as undefined
+  // despite the type. Every caller here goes through this one function, so
+  // guarding here (rather than at each `normalizeFolderPath(file.folder)`
+  // call site) means the next caller inherits the same safety for free.
+  if (!path) return "/";
   const trimmed = path.trim();
   if (!trimmed || trimmed === "/") {
     return "/";
