@@ -152,10 +152,22 @@ async function savePayloadCache(
 // on a warm start, without waiting on the signer.
 // -----------------------------------------------------------------------------
 
+/**
+ * Merges `drivePubkeys` into whatever this device has EVER recorded for
+ * `identityPubkey` — deliberately a union, never an overwrite. An overwrite
+ * here would erase the one piece of evidence that a drive-key-mint hazard
+ * (see restoreDriveKey's doc comment) occurred at the exact moment it
+ * happens: the current keyring's pubkey set shrinking to no longer include
+ * one this device previously saw is precisely what {@link
+ * findOrphanedDrivePubkeys} looks for, and it can only look for it if this
+ * cache remembers pubkeys the current keyring has since stopped resolving.
+ */
 async function saveCachedDrivePubkeys(identityPubkey: string, drivePubkeys: string[]): Promise<void> {
   try {
+    const everSeen = await getCachedDrivePubkeys(identityPubkey);
+    const union = Array.from(new Set([...everSeen, ...drivePubkeys]));
     await withTimeout(
-      setStoredItem(STORAGE_KEYS.DRIVE_PUBKEY_CACHE, { pubkey: identityPubkey, drivePubkeys }),
+      setStoredItem(STORAGE_KEYS.DRIVE_PUBKEY_CACHE, { pubkey: identityPubkey, drivePubkeys: union }),
       CACHE_IO_TIMEOUT_MS,
       undefined,
     );
@@ -217,7 +229,25 @@ async function decryptDriveKeyPayload(
     return null;
   }
 
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  // Legacy (pre-multi-key) payload shape: an array-of-tags,
+  // `[["encryptionKey", hex]]` — this is what every Drive Key on production
+  // was minted as before this keyring rework, and it is STILL the only
+  // format an existing user's key event will ever be in. Reading it here,
+  // rather than treating it as unparseable, is what stops the first-time-user
+  // path below from ever running for a returning user: a `null` return here
+  // is indistinguishable downstream from "no key was ever created", and this
+  // module's own guard against minting a second key runs on that signal.
+  // There is no `previousKeys` concept in this shape — it predates it.
+  if (Array.isArray(parsed)) {
+    const encKeyTag = parsed.find(
+      (t): t is string[] => Array.isArray(t) && t.length >= 2 && t[0] === "encryptionKey",
+    );
+    const legacySecretHex = encKeyTag?.[1];
+    if (typeof legacySecretHex !== "string" || !HEX_64.test(legacySecretHex)) return null;
+    return [legacySecretHex];
+  }
+
+  if (!parsed || typeof parsed !== "object") return null;
 
   const secretKeyHex = (parsed as { encryptionKey?: unknown }).encryptionKey;
   if (typeof secretKeyHex !== "string" || !HEX_64.test(secretKeyHex)) return null;
@@ -269,7 +299,11 @@ async function fetchDriveKeyEvents(pubkey: string): Promise<NostrEvent[]> {
       },
     );
 
-    // Safety timeout — flaky mobile relays get a generous window.
+    // Safety timeout — flaky mobile relays get a generous window. Widened
+    // from 8s: that window was itself observed too short to survive a real
+    // multi-relay outage (six configured relays failing to connect within
+    // it), which is exactly the condition this timeout's fallback logic
+    // below exists to distinguish from "no key was ever published".
     setTimeout(() => {
       void (async () => {
         if (settled) return;
@@ -293,8 +327,16 @@ async function fetchDriveKeyEvents(pubkey: string): Promise<NostrEvent[]> {
           // publishing that second key erases the first everywhere it lands —
           // so require the network to look real before treating an empty
           // result as trustworthy.
+          //
+          // `online()` is checked alongside the count because `relayHealth()`
+          // reports each socket's own connected/disconnected state, which can
+          // be stale relative to actual current reachability (a socket can
+          // report "connected" briefly after the underlying network has
+          // already dropped) — online() is the data layer's own debounced
+          // judgment of current reachability and is a cheap, independent
+          // second signal to require alongside the raw count.
           const connectedCount = health.filter((r) => r.connected).length;
-          if (connectedCount >= 2) {
+          if (connectedCount >= 2 && (await dataLayer.online())) {
             // Reachable across multiple relays, still nothing published: a
             // genuine first-time user.
             resolve([]);
@@ -310,7 +352,7 @@ async function fetchDriveKeyEvents(pubkey: string): Promise<NostrEvent[]> {
           ),
         );
       })();
-    }, 8000);
+    }, 20000);
   });
 }
 
@@ -403,21 +445,11 @@ async function buildDriveKeyring(): Promise<DriveKeyEntry[]> {
     collectedPayloads.push({ content, created_at: createdAt });
   };
 
-  // Set only when the signer itself fails (auth/extension problem) — as
-  // opposed to decryptDriveKeyPayload returning null for a payload that
-  // decrypted fine but doesn't match our expected shape (e.g. an event
-  // published in an unsupported/legacy format). Only the former should ever
-  // block first-time-user handling below; the latter must be treated the
-  // same as "no usable key found" so a stale/incompatible event can't
-  // permanently strand the app.
-  let sawGenuineDecryptError = false;
-
   const tryDecrypt = async (content: string): Promise<string[] | null> => {
     try {
       return await decryptDriveKeyPayload(content, signer, pubkey);
     } catch (e) {
       console.warn("[DriveKey] Failed to decrypt a Drive Key payload", e);
-      sawGenuineDecryptError = true;
       return null;
     }
   };
@@ -493,22 +525,52 @@ async function buildDriveKeyring(): Promise<DriveKeyEntry[]> {
 
     // --- 3. First-time-user handling ---
     if (keyring.length === 0) {
-      if (events.length > 0 && sawGenuineDecryptError) {
-        // Key events exist and the signer itself failed on at least one —
-        // a signer/auth problem, NOT a missing key. Never offer to overwrite it.
+      // A Drive Key event existing at all — regardless of WHY we couldn't
+      // turn it into a usable key (signer failure, or a payload shape this
+      // build doesn't recognize) — means a key already exists. Minting a
+      // replacement here would publish over it: the Drive Key event is
+      // replaceable (one per identity), so a second mint doesn't coexist
+      // with the first, it destroys it on every relay that accepts the
+      // publish, with no way back (see restoreDriveKey's doc comment for
+      // the incident this guards against). "Can't read it" must therefore
+      // never be treated the same as "doesn't exist" — the two used to be
+      // conflated here (gated on `sawGenuineDecryptError`, which a
+      // recognized-but-unsupported payload shape never sets), which is
+      // exactly the gap a format change walked through undetected.
+      if (events.length > 0) {
         throw new Error(
-          "Found your Drive Key but couldn't decrypt it. Please reopen the app and try again.",
+          "Found a Drive Key on the relays, but this app couldn't use it (unrecognized format or a " +
+            "decrypt failure). Creating a new key here would permanently replace it and orphan every " +
+            "file under it. Please update the app, or use Import Drive Key with your existing secret.",
         );
       }
 
-      // Either no events exist, or every event we found decrypted fine but was
-      // in a format we no longer support — treat both the same as a genuine
-      // first-time user rather than hard-blocking on a stale/incompatible key.
+      // A cached drive pubkey is proof THIS device has seen a real key for
+      // this identity before — from an earlier session, possibly written by
+      // an older/incompatible build. Relays returning nothing right now is
+      // far more likely a transient outage (this repo has direct evidence of
+      // one: every configured relay unreachable at once from one machine)
+      // than every relay having simultaneously forgotten a replaceable event
+      // that definitely existed. Minting here would still destroy it, so this
+      // is refused outright rather than left to the timing-based network
+      // check below — no amount of "relays looked healthy" evidence should
+      // override a device's own memory that a key exists.
+      const previouslySeenDrivePubkeys = await getCachedDrivePubkeys(pubkey);
+      if (previouslySeenDrivePubkeys.length > 0) {
+        throw new Error(
+          "This device has a Drive Key on record for this account, but the relays didn't return it " +
+            "just now (likely a network issue). Refusing to create a new key, since that would " +
+            "permanently replace the existing one. Please check your connection and try again, or use " +
+            "Import Drive Key with your existing secret.",
+        );
+      }
+
       const confirmMessage =
         "Drive key not found in relays. Do you want to create a new key?\n\n" +
-        "WARNING: If you've used Drive before on another device, any files under that " +
-        "device's key will only stay visible if THIS device still has that key too. " +
-        "Creating a new one here does not carry those files forward automatically.";
+        "WARNING: creating a new key REPLACES your Drive Key everywhere it's published — this is a " +
+        "one-per-account, replaceable event. If you've used Drive on another device or the website " +
+        "before, that device's files will become permanently unreachable unless you Import Drive Key " +
+        "with your existing secret instead of creating a new one.";
       if (!window.confirm(confirmMessage)) {
         throw new Error("User cancelled drive key creation.");
       }
@@ -583,6 +645,31 @@ export async function getDriveKeyByPubkey(pubkey: string): Promise<DriveKeyEntry
 export async function getDriveKeyPubkeys(): Promise<string[]> {
   const keyring = await getDriveKeyring();
   return keyring.map((entry) => entry.publicKey);
+}
+
+/**
+ * Detects the drive-key-mint hazard AFTER the fact: a drive pubkey this
+ * device has recorded before for `identityPubkey`, that the CURRENT keyring
+ * no longer resolves to a secret for. That gap is exactly what happens when
+ * a later mint replaces an earlier key on the relays (see
+ * {@link restoreDriveKey}'s doc comment) — the old pubkey's files become
+ * unreachable, but this device still remembers having seen that pubkey.
+ *
+ * Only catchable because {@link saveCachedDrivePubkeys} accumulates a union
+ * rather than overwriting — an overwrite would erase this exact evidence at
+ * the moment the key is lost. Returns [] when nothing looks lost (including
+ * a genuine first-time user, who has never recorded anything here).
+ *
+ * Intended for a startup check that surfaces a warning banner; does not
+ * throw on its own (network/signer failures inside getDriveKeyPubkeys
+ * propagate, but a caller driving a banner should treat that the same as
+ * "couldn't check right now" rather than "definitely fine").
+ */
+export async function findOrphanedDrivePubkeys(identityPubkey: string): Promise<string[]> {
+  const everSeen = await getCachedDrivePubkeys(identityPubkey);
+  if (everSeen.length === 0) return [];
+  const current = new Set(await getDriveKeyPubkeys());
+  return everSeen.filter((p) => !current.has(p));
 }
 
 async function getActiveEntry(): Promise<DriveKeyEntry> {
@@ -678,5 +765,74 @@ async function initializeDriveKey(
     encryptedContent,
     created_at,
   };
+}
+
+/**
+ * Recovery primitive for the Drive Key mint hazard the guards elsewhere in
+ * this module exist to prevent: a second Drive Key minted on top of a
+ * working one replaces it (the event is replaceable — one per identity),
+ * orphaning every file under the original with no way back, since
+ * {@link initializeDriveKey} always published with `previousKeys: []`.
+ *
+ * Republishes with `activeSecretHex` as the active key and
+ * `previousSecretsHex` carried alongside it in one event, so a subsequent
+ * fetch finds BOTH: {@link getDriveConversationKeys} returns every key in the
+ * keyring for decryption, and `observeFileIndex` (fileIndex.ts) already
+ * subscribes to every drive pubkey the keyring resolves to. Nothing under
+ * either key stays orphaned once this succeeds.
+ *
+ * To recover from an orphaning mint: pass the ORIGINAL (files-bearing) key
+ * as `activeSecretHex` — new uploads should keep using it — and the
+ * replacing key as one of `previousSecretsHex`, so this publish (being
+ * newer) wins over the orphaning one by replaceable-event ordering.
+ *
+ * Requires a reachable relay: {@link publishDriveKeyPayload} throws if no
+ * relay accepts the publish, same as a fresh mint.
+ */
+export async function restoreDriveKey(
+  activeSecretHex: string,
+  previousSecretsHex: string[] = [],
+): Promise<void> {
+  if (!HEX_64.test(activeSecretHex)) {
+    throw new Error("Invalid Drive Key secret: expected 64 hex characters.");
+  }
+  const validPrevious = previousSecretsHex.filter(
+    (k) => HEX_64.test(k) && k !== activeSecretHex,
+  );
+
+  const signer = await signerManager.getSigner();
+  const pubkey = await signer.getPublicKey();
+
+  const { encryptedContent, created_at } = await publishDriveKeyPayload(
+    signer,
+    pubkey,
+    activeSecretHex,
+    validPrevious,
+  );
+
+  // Rebuild the in-memory keyring directly from what was just published
+  // rather than waiting for it to round-trip back through a relay
+  // subscription — that publish IS now authoritative, and waiting would
+  // race the next caller (e.g. a standing observeFileIndex) against relay
+  // latency for no reason.
+  const keyring: DriveKeyEntry[] = [activeSecretHex, ...validPrevious].map(
+    (secretKeyHex) => ({ secretKeyHex, ...deriveKeyMaterial(secretKeyHex) }),
+  );
+
+  cachedKeyring = keyring;
+  cachedPubkey = pubkey;
+  activeSecretKeyHex = activeSecretHex;
+
+  await savePayloadCache(pubkey, [{ content: encryptedContent, created_at }]);
+  await saveCachedDrivePubkeys(pubkey, keyring.map((k) => k.publicKey));
+
+  // Callers with a standing file-index subscription (fileIndex.ts) need to
+  // re-declare their author filter now that the keyring includes a pubkey
+  // (the previously-orphaning key) it may not have been watching before.
+  notifyDriveKeysChanged();
+
+  console.log(
+    `[DriveKey] Restored keyring: ${keyring.length} key(s), active=${keyring[0]!.publicKey}`,
+  );
 }
 
