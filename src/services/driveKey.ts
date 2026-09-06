@@ -469,15 +469,23 @@ async function buildDriveKeyring(): Promise<DriveKeyEntry[]> {
   }
   const hadCachedKeys = keyring.length > 0;
 
-  // --- 2. Reconcile with relays -------------------------------------------
-  const syncWithRelays = async () => {
-    const events = await fetchDriveKeyEvents(pubkey); // never rejects — may resolve empty
-
+  // Decrypts and folds a batch of Drive Key events into the in-progress
+  // keyring/payload cache. Factored out so the retry below (after
+  // identityHistory potentially discovers where else to look) shares
+  // exactly the same ingestion logic as the first attempt, rather than a
+  // second near-copy of this loop.
+  const ingestDriveKeyEvents = async (events: NostrEvent[]): Promise<void> => {
     for (const event of events) {
       rememberPayload(event.content, event.created_at);
       const secrets = await tryDecrypt(event.content);
       secrets?.forEach((secret) => addSecret(secret, event.created_at));
     }
+  };
+
+  // --- 2. Reconcile with relays -------------------------------------------
+  const syncWithRelays = async () => {
+    let events = await fetchDriveKeyEvents(pubkey); // never rejects — may resolve empty
+    await ingestDriveKeyEvents(events);
 
     // Persist whatever we now hold so the next cold start doesn't need relays.
     persistCache();
@@ -506,7 +514,8 @@ async function buildDriveKeyring(): Promise<DriveKeyEntry[]> {
 
       // No Drive Key event was found at all — but that alone still isn't
       // proof this is a first-time user; it's equally what "the network
-      // couldn't answer" looks like. Ask the one question that actually has
+      // couldn't answer" looks like, OR what "the key lives on a relay we
+      // aren't querying" looks like. Ask the one question that actually has
       // a positive answer: has this IDENTITY (not this specific event kind)
       // ever published anything? A used identity always has SOMETHING
       // (profile, contacts, relay list, or this app's own drive metadata),
@@ -516,31 +525,55 @@ async function buildDriveKeyring(): Promise<DriveKeyEntry[]> {
       // See identityHistory.ts for the full reasoning and why "unknown" must
       // never be treated as "new".
       const identityHistory = await establishIdentityHistory(pubkey);
-      if (identityHistory !== "new") {
+
+      if (identityHistory === "existing") {
+        // identityHistory's own broad-kind query (kinds 0/3/10002/34578)
+        // may have just delivered this identity's kind-10002 relay list
+        // (NIP-65) into the local relay's store — @formstr/local-relay
+        // routes author-scoped queries through an outbox model
+        // (partitionAuthorsByRelay / getWriteRelays), but ONLY using
+        // whatever kind-10002 it already has locally; the first
+        // fetchDriveKeyEvents call above had nothing to route with. Retry
+        // now that it might: this is what actually finds a Drive Key that
+        // was published to relays outside this app's fixed default set,
+        // rather than merely refusing to destroy it.
+        events = await fetchDriveKeyEvents(pubkey);
+        await ingestDriveKeyEvents(events);
+        persistCache();
+      }
+
+      if (keyring.length === 0 && identityHistory !== "new") {
         throw new Error(
           identityHistory === "existing"
-            ? "This account has used Nostr before, but no Drive Key could be found for it. Creating a " +
-                "new one would risk destroying an existing key if one exists. Please check your " +
-                "connection and try again, or use Import Drive Key with your existing secret."
+            ? "This account has used Nostr before, but no Drive Key could be found for it, even after " +
+                "checking its own relay list. Creating a new one would risk destroying an existing key " +
+                "if one exists elsewhere. Please check your connection and try again, or use Import " +
+                "Drive Key with your existing secret."
             : "Could not reach enough relays to tell whether this account already has a Drive Key. " +
                 "Refusing to create one, since that could permanently destroy an existing key. Please " +
                 "check your connection and try again.",
         );
       }
 
-      const confirmMessage =
-        "No Drive Key found, and this looks like a new account — create one now?\n\n" +
-        "Note: creating a key REPLACES your Drive Key everywhere it's published (one per account, " +
-        "replaceable). If you've actually used Drive before and see this by mistake, use Import Drive " +
-        "Key with your existing secret instead.";
-      if (!window.confirm(confirmMessage)) {
-        throw new Error("User cancelled drive key creation.");
-      }
+      if (keyring.length === 0) {
+        // Only reachable with identityHistory === "new" — the "existing"
+        // and "unknown" cases both throw above.
+        const confirmMessage =
+          "No Drive Key found, and this looks like a new account — create one now?\n\n" +
+          "Note: creating a key REPLACES your Drive Key everywhere it's published (one per account, " +
+          "replaceable). If you've actually used Drive before and see this by mistake, use Import Drive " +
+          "Key with your existing secret instead.";
+        if (!window.confirm(confirmMessage)) {
+          throw new Error("User cancelled drive key creation.");
+        }
 
-      const created = await initializeDriveKey(signer, pubkey);
-      addSecret(created.entry.secretKeyHex, created.created_at);
-      rememberPayload(created.encryptedContent, created.created_at);
-      persistCache();
+        const created = await initializeDriveKey(signer, pubkey);
+        addSecret(created.entry.secretKeyHex, created.created_at);
+        rememberPayload(created.encryptedContent, created.created_at);
+        persistCache();
+      }
+      // else: the retry above found the key — a returning user whose key
+      // lives outside the fixed relay set. Nothing left to do here.
     }
 
     finalizeActiveKey();
