@@ -8,6 +8,7 @@ import { SearchIcon, GridViewIcon, ListViewIcon, FolderIcon } from '../icons/Ico
 import { isDirectChildFolder, getFolderName, getFolderItemCount } from '../../utils/folder';
 import { type SortKey, SORT_LABEL } from '../../utils/constants';
 import { FILE_HASH_MIME } from '../../utils/constants';
+import { refreshDriveKeyring } from '../../services/driveKey';
 
 export function FileList() {
   const {
@@ -348,7 +349,20 @@ export function FileList() {
                 Check your connection and retry, or use Import Drive Key from the account menu if you
                 have an existing key.
               </p>
-              <button className="empty-state-retry" onClick={() => void refresh()}>
+              <button
+                className="empty-state-retry"
+                onClick={() => {
+                  // refresh() alone only re-declares the file-index interest —
+                  // it does nothing for the more common cause of "degraded",
+                  // which is the Drive Key resolution itself being stuck (see
+                  // refreshDriveKeyring's doc comment: once resolved, nothing
+                  // otherwise ever rechecks relays for the rest of the tab's
+                  // life). Both together cover "the key was the problem" and
+                  // "the file-index subscription was the problem".
+                  void refreshDriveKeyring();
+                  void refresh();
+                }}
+              >
                 Retry
               </button>
             </div>

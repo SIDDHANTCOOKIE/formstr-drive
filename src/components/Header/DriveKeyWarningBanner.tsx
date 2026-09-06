@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useProfileContext } from "../../hooks/useProfileContext";
-import { findOrphanedDrivePubkeys } from "../../services/driveKey";
+import { findOrphanedDrivePubkeys, onDriveKeysChanged } from "../../services/driveKey";
 import { DriveKeyModal } from "./DriveKeyModal";
 import "./DriveKeyWarningBanner.css";
 
@@ -23,18 +23,32 @@ export function DriveKeyWarningBanner() {
       setOrphaned([]);
       return;
     }
+
     let cancelled = false;
-    findOrphanedDrivePubkeys(pubkey)
-      .then((result) => {
-        if (!cancelled) setOrphaned(result);
-      })
-      .catch(() => {
-        // Inconclusive (network/signer failure) — never claim "all clear" on
-        // a failed check, but also never show a false-positive warning over
-        // what might just be a transient lookup failure.
-      });
+    const check = () => {
+      findOrphanedDrivePubkeys(pubkey)
+        .then((result) => {
+          if (!cancelled) setOrphaned(result);
+        })
+        .catch(() => {
+          // Inconclusive (network/signer failure) — never claim "all clear"
+          // on a failed check, but also never show a false-positive warning
+          // over what might just be a transient lookup failure.
+        });
+    };
+
+    check();
+    // Re-run whenever the keyring's pubkey set changes — either a successful
+    // Import Drive Key, or refreshDriveKeyring's background top-up silently
+    // finding the missing key on its own (see its doc comment: a tab that
+    // already resolved a keyring otherwise never rechecks relays again).
+    // Without this the banner only ever reflected the state at mount, so it
+    // wouldn't clear itself even after the underlying problem was fixed.
+    const unsubscribe = onDriveKeysChanged(check);
+
     return () => {
       cancelled = true;
+      unsubscribe();
     };
   }, [isSignedIn, pubkey]);
 

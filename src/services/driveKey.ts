@@ -634,6 +634,97 @@ async function buildDriveKeyring(): Promise<DriveKeyEntry[]> {
   return keyring;
 }
 
+// Guards refreshDriveKeyring against overlapping calls and against firing on
+// every rapid visibilitychange toggle — this is a background top-up, not
+// something that needs to run more than about once a minute even if the tab
+// is switched to and from repeatedly.
+let refreshInFlight: Promise<void> | null = null;
+let lastRefreshAt = 0;
+const MIN_REFRESH_INTERVAL_MS = 60_000;
+
+/**
+ * Re-checks relays for Drive Key secrets beyond what's already cached,
+ * WITHOUT ever resolving from scratch or risking a mint decision — this only
+ * ever ADDS keys to an already-resolved keyring, the same thing
+ * buildDriveKeyring's own background sync (the `hadCachedKeys` branch) does
+ * once, on the very first resolution of a session.
+ *
+ * That "once" is the gap this fills: getDriveKeyring()'s fast path returns
+ * `cachedKeyring` forever after that, with no mechanism to ever recheck
+ * relays again for the rest of the page's life — not when a relay that was
+ * unreachable at boot reconnects, and not when a recovery (restoreDriveKey)
+ * published from another device/tab lands afterward. A tab that resolved
+ * its keyring before either of those happened is otherwise stuck with that
+ * answer until a full reload — observed directly: one browser tab correctly
+ * holding 2 keys after a recovery, a second tab (resolved earlier, separate
+ * storage) still stuck on the pre-recovery 1.
+ *
+ * Wired to fire when the tab regains visibility (see the listener below) —
+ * the same "did something change while we were away" pattern
+ * usePendingNativeImports.ts already uses for pending imports, not a blind
+ * poll. A no-op if nothing has resolved yet (buildDriveKeyring will run
+ * naturally) or the signed-in identity has changed since.
+ */
+export async function refreshDriveKeyring(): Promise<void> {
+  if (!cachedKeyring || !cachedPubkey) return;
+  if (cachedPubkey !== signerManager.getPubkey()) return;
+  if (refreshInFlight) return refreshInFlight;
+  if (Date.now() - lastRefreshAt < MIN_REFRESH_INTERVAL_MS) return;
+
+  const pubkey = cachedPubkey;
+  refreshInFlight = (async () => {
+    try {
+      const signer = await signerManager.getSigner();
+      const events = await fetchDriveKeyEvents(pubkey);
+      // Re-check after the await: a sign-out/switch or a fresh
+      // buildDriveKeyring could have run while this was in flight.
+      if (events.length === 0 || !cachedKeyring || cachedPubkey !== pubkey) return;
+
+      const seenSecrets = new Set(cachedKeyring.map((k) => k.secretKeyHex));
+      let changed = false;
+
+      for (const event of events) {
+        let secrets: string[] | null;
+        try {
+          secrets = await decryptDriveKeyPayload(event.content, signer, pubkey);
+        } catch (e) {
+          console.warn("[DriveKey] Refresh: failed to decrypt a payload", e);
+          continue;
+        }
+        secrets?.forEach((secretKeyHex) => {
+          if (!HEX_64.test(secretKeyHex) || seenSecrets.has(secretKeyHex)) return;
+          seenSecrets.add(secretKeyHex);
+          cachedKeyring!.push({ secretKeyHex, ...deriveKeyMaterial(secretKeyHex) });
+          changed = true;
+        });
+      }
+
+      if (changed) {
+        console.log(
+          `[DriveKey] Background refresh found additional key(s) — keyring now ${cachedKeyring.length}`,
+        );
+        void saveCachedDrivePubkeys(pubkey, cachedKeyring.map((k) => k.publicKey));
+        notifyDriveKeysChanged();
+      }
+    } catch (e) {
+      console.warn("[DriveKey] Background refresh failed", e);
+    } finally {
+      lastRefreshAt = Date.now();
+      refreshInFlight = null;
+    }
+  })();
+
+  return refreshInFlight;
+}
+
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      void refreshDriveKeyring();
+    }
+  });
+}
+
 /**
  * The conversation keys for every Drive Key. Try each one when decrypting file
  * metadata until the NIP-44 MAC validates.
