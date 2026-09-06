@@ -374,6 +374,115 @@ export async function getDriveKeyring(): Promise<DriveKeyEntry[]> {
   }
 }
 
+/** The pieces of buildDriveKeyring's in-progress state resolveEmptyKeyring
+ *  needs — passed explicitly (rather than resolveEmptyKeyring closing over
+ *  buildDriveKeyring's locals) so this stays a normal, independently
+ *  readable top-level function instead of more nested closure state. */
+interface EmptyKeyringDeps {
+  getKeyringLength: () => number;
+  addSecret: (secretKeyHex: string, createdAt: number) => boolean;
+  rememberPayload: (content: string, createdAt: number) => void;
+  ingestDriveKeyEvents: (events: NostrEvent[]) => Promise<void>;
+  persistCache: () => void;
+}
+
+/**
+ * Runs only when the first Drive Key fetch left the keyring empty: decides
+ * whether that means "genuinely new" (safe to mint) or something else
+ * entirely (found-but-unusable, unreachable network, or findable via a
+ * wider relay search) — see the inline comments for why each branch is
+ * handled the way it is.
+ */
+async function resolveEmptyKeyring(
+  pubkey: string,
+  signer: Awaited<ReturnType<typeof signerManager.getSigner>>,
+  firstAttemptEvents: NostrEvent[],
+  deps: EmptyKeyringDeps,
+): Promise<void> {
+  const { getKeyringLength, addSecret, rememberPayload, ingestDriveKeyEvents, persistCache } = deps;
+
+  // A Drive Key event existing at all — regardless of WHY we couldn't turn
+  // it into a usable key (signer failure, or a payload shape this build
+  // doesn't recognize) — means a key already exists. Minting a replacement
+  // here would publish over it: the Drive Key event is replaceable (one per
+  // identity), so a second mint doesn't coexist with the first, it destroys
+  // it on every relay that accepts the publish, with no way back (see
+  // restoreDriveKey's doc comment for the incident this guards against).
+  // "Can't read it" must therefore never be treated the same as "doesn't
+  // exist" — the two used to be conflated here (gated on
+  // `sawGenuineDecryptError`, which a recognized-but-unsupported payload
+  // shape never sets), which is exactly the gap a format change walked
+  // through undetected.
+  if (firstAttemptEvents.length > 0) {
+    throw new Error(
+      "Found a Drive Key on the relays, but this app couldn't use it (unrecognized format or a " +
+        "decrypt failure). Creating a new key here would permanently replace it and orphan every " +
+        "file under it. Please update the app, or use Import Drive Key with your existing secret.",
+    );
+  }
+
+  // No Drive Key event was found at all — but that alone still isn't proof
+  // this is a first-time user; it's equally what "the network couldn't
+  // answer" looks like, OR what "the key lives on a relay we aren't
+  // querying" looks like. Ask the one question that actually has a
+  // positive answer: has this IDENTITY (not this specific event kind) ever
+  // published anything? A used identity always has SOMETHING (profile,
+  // contacts, relay list, or this app's own drive metadata), independent
+  // of whether the Drive Key specifically could be found — so this can't
+  // be fooled by the same failure mode (a payload/kind this build doesn't
+  // recognize) that caused the original incident. See identityHistory.ts
+  // for the full reasoning and why "unknown" must never be treated as "new".
+  const identityHistory = await establishIdentityHistory(pubkey);
+
+  if (identityHistory === "existing") {
+    // identityHistory's own broad-kind query (kinds 0/3/10002/34578) may
+    // have just delivered this identity's kind-10002 relay list (NIP-65)
+    // into the local relay's store — @formstr/local-relay routes
+    // author-scoped queries through an outbox model
+    // (partitionAuthorsByRelay / getWriteRelays), but ONLY using whatever
+    // kind-10002 it already has locally; the first fetchDriveKeyEvents call
+    // had nothing to route with. Retry now that it might: this is what
+    // actually finds a Drive Key published to relays outside this app's
+    // fixed default set, not just what stops the app from destroying it.
+    const retryEvents = await fetchDriveKeyEvents(pubkey);
+    await ingestDriveKeyEvents(retryEvents);
+    persistCache();
+  }
+
+  if (getKeyringLength() === 0 && identityHistory !== "new") {
+    throw new Error(
+      identityHistory === "existing"
+        ? "This account has used Nostr before, but no Drive Key could be found for it, even after " +
+            "checking its own relay list. Creating a new one would risk destroying an existing key " +
+            "if one exists elsewhere. Please check your connection and try again, or use Import " +
+            "Drive Key with your existing secret."
+        : "Could not reach enough relays to tell whether this account already has a Drive Key. " +
+            "Refusing to create one, since that could permanently destroy an existing key. Please " +
+            "check your connection and try again.",
+    );
+  }
+
+  if (getKeyringLength() === 0) {
+    // Only reachable with identityHistory === "new" — the "existing" and
+    // "unknown" cases both throw above.
+    const confirmMessage =
+      "No Drive Key found, and this looks like a new account — create one now?\n\n" +
+      "Note: creating a key REPLACES your Drive Key everywhere it's published (one per account, " +
+      "replaceable). If you've actually used Drive before and see this by mistake, use Import Drive " +
+      "Key with your existing secret instead.";
+    if (!window.confirm(confirmMessage)) {
+      throw new Error("User cancelled drive key creation.");
+    }
+
+    const created = await initializeDriveKey(signer, pubkey);
+    addSecret(created.entry.secretKeyHex, created.created_at);
+    rememberPayload(created.encryptedContent, created.created_at);
+    persistCache();
+  }
+  // else: the retry above found the key — a returning user whose key lives
+  // outside the fixed relay set. Nothing left to do here.
+}
+
 async function buildDriveKeyring(): Promise<DriveKeyEntry[]> {
   const signer = await signerManager.getSigner();
   const pubkey = await signer.getPublicKey();
@@ -484,7 +593,7 @@ async function buildDriveKeyring(): Promise<DriveKeyEntry[]> {
 
   // --- 2. Reconcile with relays -------------------------------------------
   const syncWithRelays = async () => {
-    let events = await fetchDriveKeyEvents(pubkey); // never rejects — may resolve empty
+    const events = await fetchDriveKeyEvents(pubkey); // never rejects — may resolve empty
     await ingestDriveKeyEvents(events);
 
     // Persist whatever we now hold so the next cold start doesn't need relays.
@@ -492,88 +601,13 @@ async function buildDriveKeyring(): Promise<DriveKeyEntry[]> {
 
     // --- 3. First-time-user handling ---
     if (keyring.length === 0) {
-      // A Drive Key event existing at all — regardless of WHY we couldn't
-      // turn it into a usable key (signer failure, or a payload shape this
-      // build doesn't recognize) — means a key already exists. Minting a
-      // replacement here would publish over it: the Drive Key event is
-      // replaceable (one per identity), so a second mint doesn't coexist
-      // with the first, it destroys it on every relay that accepts the
-      // publish, with no way back (see restoreDriveKey's doc comment for
-      // the incident this guards against). "Can't read it" must therefore
-      // never be treated the same as "doesn't exist" — the two used to be
-      // conflated here (gated on `sawGenuineDecryptError`, which a
-      // recognized-but-unsupported payload shape never sets), which is
-      // exactly the gap a format change walked through undetected.
-      if (events.length > 0) {
-        throw new Error(
-          "Found a Drive Key on the relays, but this app couldn't use it (unrecognized format or a " +
-            "decrypt failure). Creating a new key here would permanently replace it and orphan every " +
-            "file under it. Please update the app, or use Import Drive Key with your existing secret.",
-        );
-      }
-
-      // No Drive Key event was found at all — but that alone still isn't
-      // proof this is a first-time user; it's equally what "the network
-      // couldn't answer" looks like, OR what "the key lives on a relay we
-      // aren't querying" looks like. Ask the one question that actually has
-      // a positive answer: has this IDENTITY (not this specific event kind)
-      // ever published anything? A used identity always has SOMETHING
-      // (profile, contacts, relay list, or this app's own drive metadata),
-      // independent of whether the Drive Key specifically could be found —
-      // so this can't be fooled by the same failure mode (a payload/kind
-      // this build doesn't recognize) that caused the original incident.
-      // See identityHistory.ts for the full reasoning and why "unknown" must
-      // never be treated as "new".
-      const identityHistory = await establishIdentityHistory(pubkey);
-
-      if (identityHistory === "existing") {
-        // identityHistory's own broad-kind query (kinds 0/3/10002/34578)
-        // may have just delivered this identity's kind-10002 relay list
-        // (NIP-65) into the local relay's store — @formstr/local-relay
-        // routes author-scoped queries through an outbox model
-        // (partitionAuthorsByRelay / getWriteRelays), but ONLY using
-        // whatever kind-10002 it already has locally; the first
-        // fetchDriveKeyEvents call above had nothing to route with. Retry
-        // now that it might: this is what actually finds a Drive Key that
-        // was published to relays outside this app's fixed default set,
-        // rather than merely refusing to destroy it.
-        events = await fetchDriveKeyEvents(pubkey);
-        await ingestDriveKeyEvents(events);
-        persistCache();
-      }
-
-      if (keyring.length === 0 && identityHistory !== "new") {
-        throw new Error(
-          identityHistory === "existing"
-            ? "This account has used Nostr before, but no Drive Key could be found for it, even after " +
-                "checking its own relay list. Creating a new one would risk destroying an existing key " +
-                "if one exists elsewhere. Please check your connection and try again, or use Import " +
-                "Drive Key with your existing secret."
-            : "Could not reach enough relays to tell whether this account already has a Drive Key. " +
-                "Refusing to create one, since that could permanently destroy an existing key. Please " +
-                "check your connection and try again.",
-        );
-      }
-
-      if (keyring.length === 0) {
-        // Only reachable with identityHistory === "new" — the "existing"
-        // and "unknown" cases both throw above.
-        const confirmMessage =
-          "No Drive Key found, and this looks like a new account — create one now?\n\n" +
-          "Note: creating a key REPLACES your Drive Key everywhere it's published (one per account, " +
-          "replaceable). If you've actually used Drive before and see this by mistake, use Import Drive " +
-          "Key with your existing secret instead.";
-        if (!window.confirm(confirmMessage)) {
-          throw new Error("User cancelled drive key creation.");
-        }
-
-        const created = await initializeDriveKey(signer, pubkey);
-        addSecret(created.entry.secretKeyHex, created.created_at);
-        rememberPayload(created.encryptedContent, created.created_at);
-        persistCache();
-      }
-      // else: the retry above found the key — a returning user whose key
-      // lives outside the fixed relay set. Nothing left to do here.
+      await resolveEmptyKeyring(pubkey, signer, events, {
+        getKeyringLength: () => keyring.length,
+        addSecret,
+        rememberPayload,
+        ingestDriveKeyEvents,
+        persistCache,
+      });
     }
 
     finalizeActiveKey();
