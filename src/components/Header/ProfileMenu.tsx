@@ -280,7 +280,7 @@ export function ProfileMenu() {
                 setOpen(false);
               }}
             >
-              Drive Key (backup / import)
+              Import Drive Key
             </button>
           </div>
         </div>

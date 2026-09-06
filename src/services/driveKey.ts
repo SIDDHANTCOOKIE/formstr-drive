@@ -611,6 +611,58 @@ async function buildDriveKeyring(): Promise<DriveKeyEntry[]> {
     }
 
     finalizeActiveKey();
+
+    // --- 4. Self-heal a relay event narrower than what this device knows ---
+    // This device can know MORE than the network currently does: an earlier
+    // accidental mint (see restoreDriveKey's doc comment) replaces the real
+    // key's event on relays with a narrower one, but a device that already
+    // had the real key cached locally keeps decrypting it fine regardless —
+    // it just never had a reason to WRITE that knowledge back. Verified
+    // directly: one browser resolving 2 keys from its own local cache while
+    // relays carry only 1, and no amount of another device re-querying
+    // those same relays can ever converge, because there is genuinely
+    // nothing wider on the network to fetch. Only refreshDriveKeyring
+    // (re-fetching relays) cannot fix this class of gap; only publishing
+    // can.
+    //
+    // Guarded to only ever ADD, never replace under uncertainty:
+    //   - the newest relay event must decrypt successfully — if it can't be
+    //     read, its contents are unknown, and publishing over an unreadable
+    //     event is the same hazard the original mint caused
+    //   - what's resolved locally must be a STRICT superset of what that
+    //     event carries — never publish a subset, and only publish when
+    //     every secret the network currently has is also one we hold
+    if (events.length > 0 && keyring.length > 0) {
+      const newestEvent = events[0]!; // fetchDriveKeyEvents returns newest-first
+      const publishedSecrets = await tryDecrypt(newestEvent.content);
+      if (publishedSecrets) {
+        const resolvedSecrets = keyring.map((k) => k.secretKeyHex);
+        const isStrictSuperset =
+          publishedSecrets.length < resolvedSecrets.length &&
+          publishedSecrets.every((s) => resolvedSecrets.includes(s));
+
+        if (isStrictSuperset) {
+          try {
+            const active = activeSecretKeyHex!;
+            const previous = resolvedSecrets.filter((s) => s !== active);
+            const { encryptedContent, created_at } = await publishDriveKeyPayload(
+              signer,
+              pubkey,
+              active,
+              previous,
+            );
+            rememberPayload(encryptedContent, created_at);
+            persistCache();
+            console.log(
+              `[DriveKey] Self-heal: published a merged key event carrying ${resolvedSecrets.length} ` +
+                `key(s) — the relay's previous event only carried ${publishedSecrets.length}.`,
+            );
+          } catch (e) {
+            console.warn("[DriveKey] Self-heal publish failed", e);
+          }
+        }
+      }
+    }
   };
 
   if (hadCachedKeys) {
@@ -722,6 +774,18 @@ if (typeof document !== "undefined") {
     if (document.visibilityState === "visible") {
       void refreshDriveKeyring();
     }
+  });
+  // `visibilitychange` only fires when a tab is actually occluded (minimized,
+  // backgrounded, switched away from within one window) — two windows tiled
+  // side by side on screen, neither ever hidden, can click back and forth
+  // between them without it ever firing at all. `window.focus` fires on that
+  // exact OS-level "this window became active" transition regardless of
+  // on-screen visibility, so it's the trigger that actually covers that case.
+  // Both listeners are kept — mobile tab-backgrounding needs the first,
+  // desktop window-switching needs the second, and refreshDriveKeyring's own
+  // throttling makes firing both on the same transition harmless.
+  window.addEventListener("focus", () => {
+    void refreshDriveKeyring();
   });
 }
 
