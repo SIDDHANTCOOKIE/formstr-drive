@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import type { FileMetadata } from '../../types/metadata';
+import { type FileMetadata } from '../../types/metadata';
 import { useFileIndex } from '../../hooks/useFileContext';
 import { FilePreviewModal } from "./FilePreviewModal";
 import { getFileIcon, MAX_PREVIEW_SIZE } from '../../utils/fileTypeHelpers';
@@ -120,7 +120,7 @@ export function FileCard({
   const handleDelete = async () => {
     if (confirm(`Delete "${file.name}"?`)) {
       try {
-        await deleteFile(file.hash);
+        await deleteFile(file.id);
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Delete failed");
       }
@@ -138,7 +138,7 @@ export function FileCard({
     const trimmed = renameValue.trim();
     if (trimmed && trimmed !== file.name) {
       try {
-        await renameFile(file.hash, trimmed);
+        await renameFile(file.id, trimmed);
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Rename failed");
       }
@@ -158,7 +158,7 @@ export function FileCard({
 
   const handleMove = async (newFolder: string) => {
     try {
-      await moveFile(file.hash, newFolder);
+      await moveFile(file.id, newFolder);
       setShowMoveDialog(false);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Move failed");
@@ -167,10 +167,6 @@ export function FileCard({
 
   const icon = getFileIcon(file.type);
   const hasPreview = previewloaded && !!preview;
-
-  const handleSelectionToggle = () => {
-    onToggleSelection?.(file.hash);
-  };
 
 
 
@@ -183,7 +179,7 @@ export function FileCard({
       <input
         type="checkbox"
         checked={selected}
-        onChange={handleSelectionToggle}
+        onChange={() => onToggleSelection?.(file.id)}
         aria-label={`Select ${file.name}`}
       />
       <span className="file-select-box" aria-hidden="true" />
@@ -260,7 +256,7 @@ export function FileCard({
           className={`file-tile ${showMenu ? "menu-open" : ""} ${selected ? "selected" : ""}`}
           draggable
           onDragStart={(e) => {
-            e.dataTransfer.setData(FILE_HASH_MIME, file.hash);
+            e.dataTransfer.setData(FILE_HASH_MIME, file.id);
             e.dataTransfer.effectAllowed = "move";
           }}
           onMouseEnter={() => setIsHovering(true)}
@@ -342,7 +338,7 @@ export function FileCard({
         className={`file-card ${selected ? "selected" : ""}`}
         draggable
         onDragStart={(e) => {
-          e.dataTransfer.setData(FILE_HASH_MIME, file.hash);
+          e.dataTransfer.setData(FILE_HASH_MIME, file.id);
           e.dataTransfer.effectAllowed = "move";
         }}
         onMouseEnter={() => setIsHovering(true)}
