@@ -527,7 +527,10 @@ public final class DriveManifestStore {
         public final String server;
         public final String encryptionKey;
         @Nullable public final String previewHash;
-        @Nullable public final List<String> chunks;
+        /** SHA-256 of the plaintext, when the publishing client recorded one. */
+        @Nullable public final String unencryptedFileHash;
+        /** Chunks with their resolved per-chunk server (see DriveFileDownloader.Chunk). */
+        @Nullable public final List<DriveFileDownloader.Chunk> chunks;
         public final boolean isPendingImport;
         @Nullable public final String pendingImportId;
         @Nullable public final String localPath;
@@ -543,7 +546,8 @@ public final class DriveManifestStore {
                 String server,
                 String encryptionKey,
                 @Nullable String previewHash,
-                @Nullable List<String> chunks,
+                @Nullable String unencryptedFileHash,
+                @Nullable List<DriveFileDownloader.Chunk> chunks,
                 boolean isPendingImport,
                 @Nullable String pendingImportId,
                 @Nullable String localPath
@@ -558,6 +562,7 @@ public final class DriveManifestStore {
             this.server = server;
             this.encryptionKey = encryptionKey;
             this.previewHash = previewHash;
+            this.unencryptedFileHash = unencryptedFileHash;
             this.chunks = chunks;
             this.isPendingImport = isPendingImport;
             this.pendingImportId = pendingImportId;
@@ -578,17 +583,15 @@ public final class DriveManifestStore {
             String server = jsonObject.optString("server");
             String encryptionKey = jsonObject.optString("encryptionKey");
             String previewHash = jsonObject.has("previewHash") ? jsonObject.optString("previewHash") : null;
-            
-            List<String> chunks = null;
-            if (jsonObject.has("chunks")) {
-                JSONArray chunksJson = jsonObject.optJSONArray("chunks");
-                if (chunksJson != null) {
-                    chunks = new ArrayList<>();
-                    for (int i = 0; i < chunksJson.length(); i++) {
-                        chunks.add(chunksJson.optString(i));
-                    }
-                }
-            }
+            String unencryptedFileHash = jsonObject.has("unencryptedFileHash")
+                    ? jsonObject.optString("unencryptedFileHash")
+                    : null;
+
+            // Accepts both the current `[{hash, server?}]` shape and the legacy
+            // bare-string array; entries without their own server resolve to the
+            // file's primary.
+            List<DriveFileDownloader.Chunk> chunks =
+                    DriveFileDownloader.parseChunks(jsonObject.optJSONArray("chunks"), server);
 
             return new FileEntry(
                     id,
@@ -601,6 +604,7 @@ public final class DriveManifestStore {
                     server,
                     encryptionKey,
                     previewHash,
+                    unencryptedFileHash,
                     chunks,
                     false,
                     null,
@@ -619,6 +623,7 @@ public final class DriveManifestStore {
                     entry.createdAt,
                     "",
                     "",
+                    null,
                     null,
                     null,
                     true,

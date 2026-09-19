@@ -6,11 +6,10 @@ import { isAndroidPlatform } from "../utils/platform";
  * Warns before the tab/window closes while transfers are still in flight and
  * would be lost.
  *
- * A native download runs in a foreground service and survives, so it needs no
- * warning; a native upload runs in the webview (background upload is
- * disabled) and DOES die — so the rule is: warn unless every active transfer
- * is a native download. On web nothing survives a close, so any active
- * transfer warns.
+ * On Android a download always runs in a foreground service and survives; an
+ * upload survives only once it has handed off to the upload service
+ * (`survivesAppClose`) — before that it's still encrypting in the WebView and
+ * dies with it. On web nothing survives a close, so any active transfer warns.
  */
 export function useTransferExitWarning(): void {
   useEffect(() => {
@@ -19,7 +18,10 @@ export function useTransferExitWarning(): void {
         (t) => t.status === "running" || t.status === "pending",
       );
       if (active.length === 0) return;
-      const allSurvive = active.every((t) => t.type === "download" && isAndroidPlatform);
+      const allSurvive = active.every(
+        (t) =>
+          isAndroidPlatform && (t.type === "download" || t.survivesAppClose === true),
+      );
       if (allSurvive) return;
       e.preventDefault();
       e.returnValue = "";
