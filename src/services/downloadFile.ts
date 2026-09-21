@@ -74,6 +74,29 @@ function createFrameReader(reader: ReadableStreamDefaultReader<Uint8Array>) {
       buffered = buffered.subarray(n);
       return out;
     },
+    /** Throws if the stream has anything left beyond what's already
+     *  buffered — the overrun-detection counterpart to `readExactly`'s
+     *  truncation check. Every segment's GCM tag already authenticates the
+     *  bytes it covers, so trailing ciphertext past the last segment isn't a
+     *  forgeable payload; it's still a corrupted-or-tampered blob that must
+     *  not be accepted as if it matched the declared size. Call once after
+     *  the expected number of `readExactly` calls, never mid-stream — it
+     *  drains one more read to find out. */
+    async assertExhausted(): Promise<void> {
+      if (buffered.length > 0) {
+        throw new Error(
+          `Downloaded blob has ${buffered.length} unexpected trailing byte(s) past the last segment. ` +
+            `The file may be corrupted.`,
+        );
+      }
+      const { value, done } = await reader.read();
+      if (!done && value.length > 0) {
+        throw new Error(
+          `Downloaded blob has unexpected trailing data past the last segment. ` +
+            `The file may be corrupted.`,
+        );
+      }
+    },
   };
 }
 
@@ -101,6 +124,11 @@ export async function* streamDecryptedSegments(
     const frame = await frameReader.readExactly(plainLen + 16);
     yield await decryptSegment(frame, blobKey, i, isLast);
   }
+
+  // Overrun check: a blob with extra trailing ciphertext after the last
+  // segment would otherwise download as if it were fine — readExactly only
+  // catches the short direction (truncation).
+  await frameReader.assertExhausted();
 }
 
 // Browsers without the File System Access API (Firefox, Safari) have no way to
