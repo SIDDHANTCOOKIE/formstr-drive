@@ -12,11 +12,12 @@
   overflow: hidden;
   z-index: var(--z-overlay);
   animation: slideUp 0.3s ease-out;
+  pointer-events: auto;
 }
 
 .transfer-managers-container {
   position: fixed;
-  bottom: var(--space-12);
+  bottom: max(var(--space-12), var(--safe-area-bottom));
   right: var(--space-12);
   display: flex;
   flex-direction: column;
@@ -24,6 +25,7 @@
   z-index: var(--z-overlay);
   width: calc(100% - 48px);
   max-width: 320px;
+  pointer-events: none;
 }
 
 @media (min-width: 768px) {

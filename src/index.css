@@ -20,6 +20,9 @@ body {
   min-height: 100vh;
   background: var(--color-bg-canvas);
   color: var(--color-text-primary);
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 #root {
@@ -35,8 +38,10 @@ button:active:not(:disabled) {
   transform: var(--press-scale);
 }
 
-input {
+input, textarea {
   font-family: inherit;
+  user-select: auto;
+  -webkit-user-select: auto;
 }
 
 .app-logo {

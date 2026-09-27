@@ -19,8 +19,11 @@
   "dependencies": {
     "@ant-design/icons": "^6.1.1",
     "@capacitor/android": "^8.3.1",
+    "@capacitor/app": "^8.1.1",
     "@capacitor/core": "^8.3.1",
+    "@capacitor/keyboard": "^8.0.5",
     "@capacitor/preferences": "^8.0.1",
+    "@capacitor/share": "^8.0.1",
     "@formstr/local-relay": "^0.4.2",
     "@formstr/signer": "^0.2.2",
     "@khadarvsk/capacitor-secure-storage": "^0.0.1",
@@ -36,6 +39,7 @@
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
     "@capacitor/cli": "^8.3.1",
     "@eslint/js": "^9.39.1",
     "@types/node": "^24.10.9",

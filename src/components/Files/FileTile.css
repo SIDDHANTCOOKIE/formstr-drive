@@ -24,10 +24,6 @@
     0 6px 20px color-mix(in srgb, var(--color-accent) 28%, transparent);
 }
 
-.file-tile:hover .file-select {
-  opacity: 1;
-}
-
 .file-select-tile {
   position: absolute;
   top: 10px;
@@ -35,10 +31,16 @@
   z-index: 3;
 }
 
-.file-tile:hover {
-  box-shadow: var(--shadow-md);
-  border-color: var(--color-border-hover);
-  z-index: 2;
+@media (hover: hover) {
+  .file-tile:hover .file-select {
+    opacity: 1;
+  }
+
+  .file-tile:hover {
+    box-shadow: var(--shadow-md);
+    border-color: var(--color-border-hover);
+    z-index: 2;
+  }
 }
 
 .file-tile.menu-open {
@@ -132,9 +134,11 @@
   pointer-events: none;
 }
 
-.file-tile:hover .file-tile-overlay {
-  opacity: 1;
-  pointer-events: auto;
+@media (hover: hover) {
+  .file-tile:hover .file-tile-overlay {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 .file-tile.menu-open .file-tile-overlay {
@@ -159,8 +163,10 @@
   position: relative;
 }
 
-.tile-action-btn:hover {
-  background: #fff;
+@media (hover: hover) {
+  .tile-action-btn:hover {
+    background: #fff;
+  }
 }
 
 .tile-action-btn:disabled {
@@ -204,4 +210,41 @@
   margin-left: 0;
   margin-top: 2px;
   align-self: flex-start;
+}
+
+@media (hover: none) {
+  /* On touch, always show checkboxes slightly faded so they can be tapped. */
+  .file-select {
+    opacity: 0.6;
+  }
+  
+  /* Make the touch target for checkboxes bigger on mobile */
+  .file-select::after {
+    content: "";
+    position: absolute;
+    inset: -12px;
+  }
+
+  /* Always show the 3-dot menu button on touch devices */
+  .file-tile-overlay {
+    opacity: 1;
+    background: transparent; /* don't darken the whole image */
+    pointer-events: none;
+  }
+  
+  /* Hide hover-only buttons on touch to avoid clutter */
+  .tile-action-btn[title="Preview"],
+  .tile-action-btn[title="Download"],
+  .tile-action-btn[title="Share"] {
+    display: none;
+  }
+  
+  .tile-action-btn[title="More"] {
+    opacity: 1;
+    pointer-events: auto;
+    background: var(--color-bg-surface);
+    color: var(--color-text-primary);
+    border: 1px solid var(--color-border);
+    box-shadow: var(--shadow-sm);
+  }
 }

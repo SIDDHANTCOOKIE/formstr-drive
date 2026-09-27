@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { type FileMetadata } from '../../types/metadata';
+import { isAndroidPlatform } from "../../utils/platform";
 import { useFileIndex } from '../../hooks/useFileContext';
 import { FilePreviewModal } from "./FilePreviewModal";
 import { getFileIcon, MAX_PREVIEW_SIZE, resolvePreviewMode } from '../../utils/fileTypeHelpers';
@@ -49,6 +50,10 @@ export function FileCard({
   // guard is needed here — file.id is always a resolvable identity.
   const { isFileShared } = useShares();
   const isShared = isFileShared(file.id);
+  
+  const isTouch = isAndroidPlatform || ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+  const canDrag = !isTouch;
+
   const [showMenu, setShowMenu] = useState(false);
   const [showMoveDialog, setShowMoveDialog] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
@@ -108,6 +113,11 @@ export function FileCard({
       }, 0);
     }
   }, [showRenameModal]);
+
+  const handleCardTap = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    handlePreviewClick(e);
+  };
 
   const handlePreviewClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -276,11 +286,14 @@ export function FileCard({
         )}
         <div
           className={`file-tile ${showMenu ? "menu-open" : ""} ${selected ? "selected" : ""}`}
-          draggable
-          onDragStart={(e) => {
+          draggable={canDrag}
+          onDragStart={canDrag ? (e) => {
             e.dataTransfer.setData(FILE_HASH_MIME, (dragIds ?? [file.id]).join(","));
             e.dataTransfer.effectAllowed = "move";
-          }}
+          } : undefined}
+          onClick={handleCardTap}
+          role="button"
+          tabIndex={0}
           onMouseEnter={() => setIsHovering(true)}
           onMouseLeave={() => setIsHovering(false)}
         >
@@ -371,11 +384,14 @@ export function FileCard({
       {showMenu && <div className="file-menu-backdrop" onClick={() => setShowMenu(false)} />}
       <div
         className={`file-card ${selected ? "selected" : ""}`}
-        draggable
-        onDragStart={(e) => {
+        draggable={canDrag}
+        onDragStart={canDrag ? (e) => {
           e.dataTransfer.setData(FILE_HASH_MIME, (dragIds ?? [file.id]).join(","));
           e.dataTransfer.effectAllowed = "move";
-        }}
+        } : undefined}
+        onClick={handleCardTap}
+        role="button"
+        tabIndex={0}
         onMouseEnter={() => setIsHovering(true)}
         onMouseLeave={() => setIsHovering(false)}
       >
@@ -397,24 +413,24 @@ export function FileCard({
           </span>
         </div>
         <div className="file-actions">
-          <button className="action-btn" onClick={handleDownload} title="Download">
+          <button className="action-btn" onClick={(e) => { e.stopPropagation(); handleDownload(); }} title="Download">
             ↓
           </button>
           <button
             className="action-btn"
-            onClick={handlePreviewClick}
+            onClick={handlePreviewClick} // already has stopPropagation
             title="Preview"
           >
             <PreviewEyeIcon />
           </button>
           <button
             className={`action-btn${isShared ? " is-shared" : ""}`}
-            onClick={handleShareClick}
+            onClick={(e) => { e.stopPropagation(); handleShareClick(); }}
             title={isShared ? "Shared — click to manage" : "Share"}
           >
             <ShareIcon />
           </button>
-          <button className="action-btn menu-btn" onClick={() => setShowMenu(!showMenu)} title="More">
+          <button className="action-btn menu-btn" onClick={(e) => { e.stopPropagation(); setShowMenu(!showMenu); }} title="More">
             ⋮
           </button>
           {showMenu && (

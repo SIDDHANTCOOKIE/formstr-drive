@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
+  <defs>
+    <!-- Ultra-premium dark gradient background -->
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#18181B"/> <!-- Zinc 900 -->
+      <stop offset="100%" stop-color="#000000"/> <!-- Pure Black -->
+    </linearGradient>
+    
+    <rect id="bg" width="96" height="96" rx="22"/>
+    
+    <!-- Linear glass gradient for the top drive plate -->
+    <linearGradient id="glass1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="1.0"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.2"/>
+    </linearGradient>
+
+    <!-- Linear glass gradient for the middle drive plate -->
+    <linearGradient id="glass2" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.05"/>
+    </linearGradient>
+    
+    <!-- Linear glass gradient for the bottom drive plate -->
+    <linearGradient id="glass3" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.0"/>
+    </linearGradient>
+
+    <!-- Deep shadow for 3D separation -->
+    <filter id="blur-shadow">
+      <feDropShadow dx="0" dy="8" stdDeviation="6" flood-color="#000000" flood-opacity="0.85"/>
+    </filter>
+
+    <!-- Mask to punch the Form* asterisk out of the top plate -->
+    <mask id="cutout">
+      <!-- White base (keeps the plate visible) -->
+      <rect x="-50" y="-50" width="100" height="100" fill="#FFFFFF"/>
+      <!-- Black asterisk (makes the plate transparent here, creating negative space) -->
+      <g transform="scale(0.85)">
+        <line x1="0" y1="-14" x2="0" y2="14" stroke="#000000" stroke-width="5" stroke-linecap="round"/>
+        <line x1="-12.12" y1="-7" x2="12.12" y2="7" stroke="#000000" stroke-width="5" stroke-linecap="round"/>
+        <line x1="12.12" y1="-7" x2="-12.12" y2="7" stroke="#000000" stroke-width="5" stroke-linecap="round"/>
+      </g>
+    </mask>
+  </defs>
+
+  <!-- Base Plate -->
+  <use href="#bg" fill="url(#bg-grad)"/>
+  
+  <!-- Subtle OLED inner rim to define the icon edge beautifully -->
+  <rect width="95" height="95" x="0.5" y="0.5" rx="21.5" fill="none" stroke="#27272A" stroke-width="0.75"/>
+
+  <!-- Stacked Storage Data Plates -->
+  <g transform="translate(48, 62)">
+    
+    <!-- Bottom Plate -->
+    <path d="M 0 -12 L 24 0 L 0 12 L -24 0 Z" fill="url(#glass3)" filter="url(#blur-shadow)"/>
+    <path d="M 0 -12 L 24 0 L 0 12 L -24 0 Z" fill="none" stroke="#FFFFFF" stroke-opacity="0.1" stroke-width="1"/>
+
+    <!-- Middle Plate -->
+    <g transform="translate(0, -13)">
+      <path d="M 0 -14 L 28 0 L 0 14 L -28 0 Z" fill="url(#glass2)" filter="url(#blur-shadow)"/>
+      <path d="M 0 -14 L 28 0 L 0 14 L -28 0 Z" fill="none" stroke="#FFFFFF" stroke-opacity="0.3" stroke-width="1"/>
+    </g>
+
+    <!-- Top Plate (with the Asterisk Cutout) -->
+    <g transform="translate(0, -28)">
+      <path d="M 0 -18 L 34 0 L 0 18 L -34 0 Z" fill="url(#glass1)" filter="url(#blur-shadow)" mask="url(#cutout)"/>
+      <path d="M 0 -18 L 34 0 L 0 18 L -34 0 Z" fill="none" stroke="#FFFFFF" stroke-opacity="0.9" stroke-width="1.5" stroke-linejoin="round"/>
+      
+      <!-- Optional: inner highlight inside the cut-out for extra depth -->
+      <g transform="scale(0.85)" opacity="0.4">
+        <line x1="0" y1="-14" x2="0" y2="14" stroke="#FFFFFF" stroke-width="1" stroke-linecap="round"/>
+        <line x1="-12.12" y1="-7" x2="12.12" y2="7" stroke="#FFFFFF" stroke-width="1" stroke-linecap="round"/>
+        <line x1="12.12" y1="-7" x2="-12.12" y2="7" stroke="#FFFFFF" stroke-width="1" stroke-linecap="round"/>
+      </g>
+    </g>
+    
+  </g>
+</svg>

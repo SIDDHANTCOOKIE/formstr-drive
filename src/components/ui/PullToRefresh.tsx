@@ -31,6 +31,7 @@ export function PullToRefresh({
   style?: CSSProperties;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const startX = useRef<number | null>(null);
   const startY = useRef<number | null>(null);
   const pulling = useRef(false);
   const [pullDistance, setPullDistance] = useState(0);
@@ -38,6 +39,7 @@ export function PullToRefresh({
 
   const reset = useCallback(() => {
     pulling.current = false;
+    startX.current = null;
     startY.current = null;
     setPullDistance(0);
   }, []);
@@ -47,39 +49,65 @@ export function PullToRefresh({
       if (refreshing) return;
       const el = containerRef.current;
       if (!el || el.scrollTop > 0) return;
+      startX.current = e.touches[0].clientX;
       startY.current = e.touches[0].clientY;
-      pulling.current = true;
+      // Do not immediately engage pull on touch start to allow for touch slop
     },
     [refreshing],
   );
 
   const handleTouchMove = useCallback((e: TouchEvent<HTMLDivElement>) => {
-    if (!pulling.current || startY.current === null) return;
+    if (startY.current === null || startX.current === null) return;
+    
     const el = containerRef.current;
     if (!el || el.scrollTop > 0) {
       // Scrolled away from the top mid-gesture — abandon the pull rather than
       // fighting the browser's own scroll.
       pulling.current = false;
+      startX.current = null;
       startY.current = null;
       setPullDistance(0);
       return;
     }
 
-    const delta = e.touches[0].clientY - startY.current;
-    if (delta <= 0) {
+    const deltaY = e.touches[0].clientY - startY.current;
+    const deltaX = e.touches[0].clientX - startX.current;
+    
+    if (!pulling.current) {
+      const TOUCH_SLOP = 12; // px
+      // Only engage pull mode if vertical movement exceeds slop, and is primarily vertical
+      if (deltaY > TOUCH_SLOP && deltaY > Math.abs(deltaX) * 1.5) {
+        pulling.current = true;
+      } else if (Math.abs(deltaX) > TOUCH_SLOP || deltaY < -TOUCH_SLOP) {
+        // Horizontal swipe or scroll down — abandon pull detection for this gesture
+        startX.current = null;
+        startY.current = null;
+        return;
+      } else {
+        // Within slop — do nothing yet, let event bubble normally
+        return;
+      }
+    }
+
+    if (deltaY <= 0) {
       setPullDistance(0);
       return;
     }
 
-    setPullDistance(Math.min(delta * RESISTANCE, MAX_PULL));
+    setPullDistance(Math.min(deltaY * RESISTANCE, MAX_PULL));
     // Only suppress the native scroll/overscroll for this one downward-at-top
     // gesture — every other touch interaction on the page is untouched.
     e.preventDefault();
   }, []);
 
   const handleTouchEnd = useCallback(async () => {
-    if (!pulling.current) return;
+    if (!pulling.current) {
+      startX.current = null;
+      startY.current = null;
+      return;
+    }
     pulling.current = false;
+    startX.current = null;
     startY.current = null;
 
     if (pullDistance < PULL_THRESHOLD) {

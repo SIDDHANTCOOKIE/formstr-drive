@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
-import { parseShareHash, resolveSharedLink } from "../../services/sharing";
+import { decodeShareLink, resolveSharedLink } from "../../services/sharing";
 import { downloadFileStreaming, type DownloadProgressInfo } from "../../services/downloadFile";
+import { downloadFileToDownloads } from "../../native/driveManifest";
+import { isAndroidPlatform } from "../../utils/platform";
 import { isLegacyBlobFormat, type FileMetadata } from "../../types/metadata";
 import { formatSize, formatUnixSeconds } from "../../utils/format";
 import { getFileIcon, MAX_PREVIEW_SIZE, resolvePreviewMode } from "../../utils/fileTypeHelpers";
@@ -126,7 +128,7 @@ export function SharedView() {
     let cancelled = false;
 
     async function run() {
-      const payload = parseShareHash(window.location.hash);
+      const payload = decodeShareLink(window.location.hash);
       if (!payload) {
         setState({ status: "error", message: "This link is not a valid share link." });
         return;
@@ -168,7 +170,13 @@ export function SharedView() {
     setProgress(null);
     setDownloadingId(file.id);
     try {
-      await downloadFileStreaming(file, (info) => setProgress(info));
+      if (isAndroidPlatform) {
+        // Native background service handles chunks and blob hashes internally
+        // (see downloadToDownloads logic).
+        await downloadFileToDownloads(file, (percent) => setProgress({ stage: "Downloading", percent }));
+      } else {
+        await downloadFileStreaming(file, (info) => setProgress(info));
+      }
     } catch (e) {
       setDownloadError(e instanceof Error ? e.message : "Download failed");
     } finally {
@@ -184,7 +192,11 @@ export function SharedView() {
       for (const file of files) {
         setDownloadingId(file.id);
         setProgress(null);
-        await downloadFileStreaming(file, (info) => setProgress(info));
+        if (isAndroidPlatform) {
+          await downloadFileToDownloads(file, (percent) => setProgress({ stage: "Downloading", percent }));
+        } else {
+          await downloadFileStreaming(file, (info) => setProgress(info));
+        }
       }
     } catch (e) {
       setDownloadError(e instanceof Error ? e.message : "Download failed");

@@ -35,12 +35,14 @@ interface FilePreviewModalProps {
   file: FileMetadata;
   onClose: () => void;
 }
+import { useBackButton } from '../../hooks/useBackButton';
 import { ImagePreview } from '../preview/ImagePreview';
 import { VideoPreview } from '../preview/VideoPreview';
 import { PdfPreview } from '../preview/PdfPreview';
 import { TextPreview } from '../preview/TextPreview';
 
 export function FilePreviewModal({ file, onClose }: FilePreviewModalProps) {
+  useBackButton(onClose);
   const toast = useToast();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

@@ -18,12 +18,8 @@
     0 6px 20px color-mix(in srgb, var(--color-accent) 28%, transparent);
 }
 
-.file-card:hover {
-  border-color: var(--color-border-hover);
-  box-shadow: var(--shadow-xs);
-}
-
 .file-select {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -33,9 +29,16 @@
   transition: opacity var(--motion-fast) ease;
 }
 
-/* Show checkbox when parent card is hovered */
-.file-card:hover .file-select {
-  opacity: 1;
+@media (hover: hover) {
+  .file-card:hover {
+    border-color: var(--color-border-hover);
+    box-shadow: var(--shadow-xs);
+  }
+
+  /* Show checkbox when parent card is hovered */
+  .file-card:hover .file-select {
+    opacity: 1;
+  }
 }
 
 /* Always show when checked */
@@ -167,9 +170,11 @@
   color: var(--color-text-secondary);
 }
 
-.action-btn:hover {
-  background: var(--color-bg-hover);
-  color: var(--color-text-primary);
+@media (hover: hover) {
+  .action-btn:hover {
+    background: var(--color-bg-hover);
+    color: var(--color-text-primary);
+  }
 }
 
 .action-btn:disabled {
@@ -239,8 +244,10 @@
   color: var(--color-text-primary);
 }
 
-.file-menu button:hover {
-  background: var(--color-bg-hover);
+@media (hover: hover) {
+  .file-menu button:hover {
+    background: var(--color-bg-hover);
+  }
 }
 
 .file-menu button.delete-btn {
@@ -249,4 +256,17 @@
 
 .file-menu button.move-btn {
   color: var(--color-accent);
+}
+
+@media (hover: none) {
+  /* On touch, always show checkboxes slightly faded so they can be tapped. */
+  .file-select {
+    opacity: 0.6;
+  }
+  
+  .file-select::after {
+    content: "";
+    position: absolute;
+    inset: -12px;
+  }
 }

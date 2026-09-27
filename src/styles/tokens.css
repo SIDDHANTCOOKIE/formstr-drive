@@ -393,6 +393,12 @@
   --z-modal: 1100;
   --z-toast: 1200;
 
+  /* Safe Area Insets */
+  --safe-area-top: env(safe-area-inset-top, 0px);
+  --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-left: env(safe-area-inset-left, 0px);
+  --safe-area-right: env(safe-area-inset-right, 0px);
+
   /* Motion */
   --motion-fast: 0.15s;
   --motion-base: 0.2s;

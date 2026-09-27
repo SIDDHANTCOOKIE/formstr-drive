@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { App as CapApp } from "@capacitor/app";
 import { BlossomServerProvider } from "./Provider/BlossomServerProvider";
 import { FileIndexProvider } from "./Provider/FileIndexProvider";
 import { useProfileContext } from "./hooks/useProfileContext";
@@ -18,7 +19,7 @@ import { ThemeProvider } from "./context/ThemeProvider";
 import { AntdThemeBridge } from "./components/ui/AntdThemeBridge";
 import { SharedView } from "./components/Shared/SharedView";
 import { SharesProvider } from "./context/SharesProvider";
-import { parseShareHash } from "./services/sharing";
+import { decodeShareLink } from "./services/sharing";
 import "./App.css";
 
 function DriveLayout() {
@@ -81,13 +82,27 @@ function App() {
   // one never depends on the local relay's account-scoped state or a signer
   // being available. See docs/NIP-FS.md "File/Folder Sharing".
   const [isSharedRoute, setIsSharedRoute] = useState(
-    () => parseShareHash(window.location.hash) !== null,
+    () => decodeShareLink(window.location.hash) !== null,
   );
 
   useEffect(() => {
-    const onHashChange = () => setIsSharedRoute(parseShareHash(window.location.hash) !== null);
+    const sub = CapApp.addListener("appUrlOpen", (event) => {
+      try {
+        const url = new URL(event.url);
+        if (url.hash && decodeShareLink(url.hash) !== null) {
+          window.location.hash = url.hash;
+        }
+      } catch {
+        // ignore malformed URLs
+      }
+    });
+
+    const onHashChange = () => setIsSharedRoute(decodeShareLink(window.location.hash) !== null);
     window.addEventListener("hashchange", onHashChange);
-    return () => window.removeEventListener("hashchange", onHashChange);
+    return () => {
+      window.removeEventListener("hashchange", onHashChange);
+      void sub.then((s) => s.remove());
+    };
   }, []);
 
   return (
