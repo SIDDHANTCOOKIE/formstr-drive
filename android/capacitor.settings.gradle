@@ -11,6 +11,9 @@ project(':capacitor-keyboard').projectDir = new File('../node_modules/.pnpm/@cap
 include ':capacitor-preferences'
 project(':capacitor-preferences').projectDir = new File('../node_modules/.pnpm/@capacitor+preferences@8.0.1_@capacitor+core@8.3.1/node_modules/@capacitor/preferences/android')
 
+include ':capacitor-share'
+project(':capacitor-share').projectDir = new File('../node_modules/.pnpm/@capacitor+share@8.0.1_@capacitor+core@8.3.1/node_modules/@capacitor/share/android')
+
 include ':khadarvsk-capacitor-secure-storage'
 project(':khadarvsk-capacitor-secure-storage').projectDir = new File('../node_modules/.pnpm/@khadarvsk+capacitor-secure_b03eee5e3ce8ba075fda930655156b0e/node_modules/@khadarvsk/capacitor-secure-storage/android')
 

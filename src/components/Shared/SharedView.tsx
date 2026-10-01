@@ -124,11 +124,25 @@ export function SharedView() {
     setPreviewFile(file);
   };
 
+  // App.tsx only tracks whether the hash is *a* share link (a boolean), so
+  // this component is never remounted when the hash changes from one share
+  // link to another in the same tab. Tracking the actual hash value here —
+  // rather than resolving once on mount with a `[]` effect — is what makes
+  // the resolve effect below re-run on that navigation instead of silently
+  // continuing to show the first link's content.
+  const [hash, setHash] = useState(() => window.location.hash);
+  useEffect(() => {
+    const onHashChange = () => setHash(window.location.hash);
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
+    setState({ status: "loading" });
 
     async function run() {
-      const payload = decodeShareLink(window.location.hash);
+      const payload = decodeShareLink(hash);
       if (!payload) {
         setState({ status: "error", message: "This link is not a valid share link." });
         return;
@@ -161,7 +175,7 @@ export function SharedView() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [hash]);
 
   const [downloadingAll, setDownloadingAll] = useState(false);
 
@@ -173,7 +187,7 @@ export function SharedView() {
       if (isAndroidPlatform) {
         // Native background service handles chunks and blob hashes internally
         // (see downloadToDownloads logic).
-        await downloadFileToDownloads(file, (percent) => setProgress({ stage: "Downloading", percent }));
+        await downloadFileToDownloads(file, (percent) => setProgress({ stage: "Downloading", progress: percent }));
       } else {
         await downloadFileStreaming(file, (info) => setProgress(info));
       }
@@ -193,7 +207,7 @@ export function SharedView() {
         setDownloadingId(file.id);
         setProgress(null);
         if (isAndroidPlatform) {
-          await downloadFileToDownloads(file, (percent) => setProgress({ stage: "Downloading", percent }));
+          await downloadFileToDownloads(file, (percent) => setProgress({ stage: "Downloading", progress: percent }));
         } else {
           await downloadFileStreaming(file, (info) => setProgress(info));
         }
