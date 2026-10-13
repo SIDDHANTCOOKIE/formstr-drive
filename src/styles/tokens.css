@@ -410,7 +410,6 @@
   /* Layout */
   --layout-sidebar-width: 240px;
   --layout-gutter: var(--space-12);
-  --layout-content-max: 1200px;
   --layout-control-height: 36px;
   --layout-control-height-sm: 34px;
 
