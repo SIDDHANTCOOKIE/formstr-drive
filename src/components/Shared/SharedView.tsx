@@ -194,7 +194,13 @@ export function SharedView() {
         await downloadFileStreaming(file, (info) => setProgress(info));
       }
     } catch (e) {
-      setDownloadError(e instanceof Error ? e.message : "Download failed");
+      const msg = e instanceof Error ? e.message : String(e);
+      const isNotFound = /404|not found/i.test(msg);
+      setDownloadError(
+        isNotFound
+          ? "This file is no longer available (it may have been deleted by the owner)."
+          : (e instanceof Error ? e.message : "Download failed"),
+      );
     } finally {
       setDownloadingId(null);
       setProgress(null);
@@ -215,7 +221,13 @@ export function SharedView() {
         }
       }
     } catch (e) {
-      setDownloadError(e instanceof Error ? e.message : "Download failed");
+      const msg = e instanceof Error ? e.message : String(e);
+      const isNotFound = /404|not found/i.test(msg);
+      setDownloadError(
+        isNotFound
+          ? "One or more files are no longer available (they may have been deleted by the owner)."
+          : (e instanceof Error ? e.message : "Download failed"),
+      );
     } finally {
       setDownloadingId(null);
       setProgress(null);

@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { loadSharedByMe, revokeShare, type SharedByMeEntry } from '../../services/sharing';
 import { useToast } from '../../hooks/useToast';
 import { useShares } from '../../context/SharesProvider';
+import { useFileIndex } from '../../hooks/useFileContext';
 import { Share } from '@capacitor/share';
 import { isNativePlatform } from '../../utils/platform';
 import { formatUnixSeconds } from '../../utils/format';
@@ -32,6 +33,9 @@ export const SharedByMeView: React.FC<SharedByMeViewProps> = ({ onBack }) => {
   const [confirmTarget, setConfirmTarget] = useState<SharedByMeEntry | null>(null);
   const toast = useToast();
   const { refresh: refreshBadges } = useShares();
+  const { files, driveStatus } = useFileIndex();
+
+  const existingFileIds = useMemo(() => new Set(files.map((f) => f.id)), [files]);
 
   const fetchShares = async () => {
     setLoading(true);
@@ -51,6 +55,35 @@ export const SharedByMeView: React.FC<SharedByMeViewProps> = ({ onBack }) => {
     // on every render would just replay the same query.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Automatically revoke and clean up orphaned share links for files that were
+  // deleted without a live revocation (e.g. deleted on older versions of the app).
+  useEffect(() => {
+    if (driveStatus !== "ready" || loading) return;
+
+    const orphaned = shares.filter(
+      (s) => !s.revokedAt && s.source?.type === "file" && !existingFileIds.has(s.source.id),
+    );
+
+    if (orphaned.length > 0) {
+      for (const entry of orphaned) {
+        revokeShare(entry)
+          .then(() => refreshBadges())
+          .catch((e) => console.warn(`Failed to auto-revoke orphaned share for ${entry.name}`, e));
+      }
+    }
+  }, [shares, existingFileIds, driveStatus, loading, refreshBadges]);
+
+  const activeShares = useMemo(() => {
+    return shares.filter((share) => {
+      if (share.revokedAt) return false;
+      // If drive is ready and the file is no longer in the drive, hide it
+      if (driveStatus === "ready" && share.source?.type === "file" && !existingFileIds.has(share.source.id)) {
+        return false;
+      }
+      return true;
+    });
+  }, [shares, driveStatus, existingFileIds]);
 
   const handleCopyLink = async (url: string, name: string) => {
     try {
@@ -98,13 +131,13 @@ export const SharedByMeView: React.FC<SharedByMeViewProps> = ({ onBack }) => {
 
       {loading ? (
         <div className="loader"></div>
-      ) : shares.length === 0 ? (
+      ) : activeShares.length === 0 ? (
         <div className="shared-by-me-empty">
           <p>You haven't shared anything yet.</p>
         </div>
       ) : (
         <div className="shared-by-me-list">
-          {shares.map((share) => {
+          {activeShares.map((share) => {
             const isRevoked = !!share.revokedAt;
             return (
               <div
