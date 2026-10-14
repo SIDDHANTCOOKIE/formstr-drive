@@ -1,40 +1,55 @@
-export function canOpenInNostrDocs(file: { type: string; name: string; chunks?: unknown[]; blobHash?: string }): boolean {
+import type { FileMetadata } from "../types/metadata";
+
+export function isOfficeDoc(file: { type?: string; name?: string }): boolean {
+  const normalizedType = (file.type || "").toLowerCase();
+  const lowerName = (file.name || "").toLowerCase();
+
+  return (
+    normalizedType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    normalizedType === "application/msword" ||
+    normalizedType === "application/vnd.oasis.opendocument.text" ||
+    lowerName.endsWith(".docx") ||
+    lowerName.endsWith(".doc") ||
+    lowerName.endsWith(".odt")
+  );
+}
+
+export function isTextDoc(file: { type?: string; name?: string }): boolean {
+  const normalizedType = (file.type || "").toLowerCase();
+  const lowerName = (file.name || "").toLowerCase();
+
+  return (
+    normalizedType === "text/markdown" ||
+    normalizedType === "text/plain" ||
+    lowerName.endsWith(".md") ||
+    lowerName.endsWith(".markdown") ||
+    lowerName.endsWith(".txt")
+  );
+}
+
+export function canOpenInPages(file: { type?: string; name?: string; chunks?: unknown[]; blobHash?: string }): boolean {
+  return isOfficeDoc(file) || isTextDoc(file) || canOpenInNostrDocs(file);
+}
+
+export function canOpenInNostrDocs(file: { type?: string; name?: string; chunks?: unknown[]; blobHash?: string }): boolean {
   if (file.chunks && file.chunks.length > 0) {
     return false; // chunked payloads are not supported by the current Nostr Docs app
   }
-  if (file.blobHash) {
-    // NIP-FS single-blob files use a different segment cipher (crypto.ts's
-    // encryptSegment: computed counter+last-flag nonce, no version byte) than
-    // the legacy single-blob format Nostr Docs was verified against. Exclude
-    // until/unless that external app is confirmed to decrypt the new format,
-    // rather than send a payload it silently can't read.
-    return false;
-  }
-
-  const normalizedType = file.type.toLowerCase();
-  const lowerName = file.name.toLowerCase();
-
-  if (
-    normalizedType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-    normalizedType === "application/msword" ||
-    normalizedType === "application/vnd.oasis.opendocument.text"
-  ) {
-    return true;
-  }
-
-  return lowerName.endsWith(".docx") || lowerName.endsWith(".doc") || lowerName.endsWith(".odt");
+  return isOfficeDoc(file);
 }
 
 export function openInNostrDocs(file: {
   server: string;
+  blobHash?: string;
   chunks?: { hash: string }[];
   encryptionKey: string;
   type: string;
   name: string;
 }) {
+  const hash = file.blobHash ?? file.chunks?.[0]?.hash ?? "";
   const payload = {
     server: file.server,
-    hash: file.chunks?.[0]?.hash ?? "",
+    hash,
     encryptionKey: file.encryptionKey,
     type: file.type,
     name: file.name,
@@ -58,4 +73,25 @@ export async function openInFormstrPages(textContent: string, setPagesHint: (hin
   } finally {
     window.open("https://pages.formstr.app/", "_blank", "noopener,noreferrer");
   }
+}
+
+export function openFileInPages(
+  file: FileMetadata,
+  options?: {
+    textContent?: string | null;
+    notify?: (hint: string) => void;
+  }
+): void {
+  const notify = options?.notify ?? (() => {});
+
+  const hash = file.blobHash ?? file.chunks?.[0]?.hash;
+  if (file.server && hash && file.encryptionKey) {
+    openInNostrDocs(file);
+    notify("Opening document in Formstr Pages...");
+    return;
+  }
+
+  // Fallback if missing blob metadata: open Formstr Pages
+  notify("Opening Formstr Pages...");
+  window.open("https://pages.formstr.app/", "_blank", "noopener,noreferrer");
 }

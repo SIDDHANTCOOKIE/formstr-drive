@@ -1,7 +1,8 @@
-import { PreviewEyeIcon, ShareIcon } from "../icons/Icons";
+import { PreviewEyeIcon, ShareIcon, DocPagesIcon } from "../icons/Icons";
 
 export interface FileMenuProps {
   onView: () => void;
+  onOpenInPages?: () => void;
   onDownload: () => void;
   onShare: () => void;
   onMove: () => void;
@@ -14,6 +15,7 @@ export interface FileMenuProps {
  *  positioning, scrim and dismissal. */
 export function FileMenu({
   onView,
+  onOpenInPages,
   onDownload,
   onShare,
   onMove,
@@ -27,6 +29,13 @@ export function FileMenu({
         <PreviewEyeIcon />
         <span>View</span>
       </button>
+
+      {onOpenInPages && (
+        <button type="button" role="menuitem" className="file-menu-item" onClick={onOpenInPages}>
+          <DocPagesIcon />
+          <span>Open in Formstr Pages</span>
+        </button>
+      )}
 
       <button type="button" role="menuitem" className="file-menu-item" onClick={onDownload}>
         <span className="file-menu-icon-arrow" aria-hidden="true">↓</span>
