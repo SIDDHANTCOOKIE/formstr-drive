@@ -79,9 +79,10 @@
   border-color: var(--color-text-secondary);
 }
 
-.preview-header-pages-btn svg {
-  width: 15px;
-  height: 15px;
+.preview-header-pages-btn img {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
 }
 
 .preview-header-tab-btn {

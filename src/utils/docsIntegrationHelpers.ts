@@ -35,6 +35,12 @@ export function canOpenInNostrDocs(file: { type?: string; name?: string; chunks?
   return isOfficeDoc(file);
 }
 
+// The Android app's WebView is itself served from "localhost", so the hostname
+// can't tell dev from production. Only a dev build talks to the local Pages server.
+function pagesBaseUrl(): string {
+  return import.meta.env.DEV ? "http://localhost:5174" : "https://pages.formstr.app";
+}
+
 export function openInNostrDocs(file: {
   server: string;
   blobHash?: string;
@@ -63,10 +69,7 @@ export function openInNostrDocs(file: {
     binary += String.fromCharCode(utf8Bytes[i]);
   }
   const encodedPayload = btoa(binary);
-  const isLocal =
-    typeof window !== "undefined" &&
-    (window?.location?.hostname === "localhost" || window?.location?.hostname === "127.0.0.1");
-  const base = isLocal ? "http://localhost:5174" : "https://pages.formstr.app";
+  const base = pagesBaseUrl();
   // Hash routing instead of query params to avoid exposing the secret key to the server logs
   const url = `${base}/#payload=${encodeURIComponent(encodedPayload)}`;
   window.open(url, "_blank", "noopener,noreferrer");
@@ -76,10 +79,7 @@ export function openInFormstrPages(_textContent?: string, setPagesHint?: (hint: 
   if (setPagesHint) {
     setPagesHint("Opening Formstr Pages...");
   }
-  const isLocal =
-    typeof window !== "undefined" &&
-    (window?.location?.hostname === "localhost" || window?.location?.hostname === "127.0.0.1");
-  const base = isLocal ? "http://localhost:5174" : "https://pages.formstr.app";
+  const base = pagesBaseUrl();
   window.open(base, "_blank", "noopener,noreferrer");
 }
 

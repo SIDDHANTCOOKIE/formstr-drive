@@ -14,8 +14,7 @@ import { PdfPreview } from '../preview/PdfPreview';
 import { TextPreview } from '../preview/TextPreview';
 import { HtmlPreview } from '../preview/HtmlPreview';
 import { DocxPreview } from '../preview/DocxPreview';
-import { parseDocxToHtml } from '../../utils/docxParser';
-import { DocPagesIcon, ExternalLinkIcon } from '../icons/Icons';
+import { ExternalLinkIcon } from '../icons/Icons';
 
 /**
  * Video/PDF are the only modes with a seekable streaming path (see
@@ -52,6 +51,7 @@ export function FilePreviewModal({ file, onClose }: FilePreviewModalProps) {
   const [error, setError] = useState<string | null>(null);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [textContent, setTextContent] = useState<string | null>(null);
+  const [docxBytes, setDocxBytes] = useState<Uint8Array | null>(null);
   const [pagesHint, setPagesHint] = useState<string | null>(null);
 
   const mode = resolvePreviewMode(file.type, file.name);
@@ -69,6 +69,7 @@ export function FilePreviewModal({ file, onClose }: FilePreviewModalProps) {
       setError(null);
       setBlobUrl(null);
       setTextContent(null);
+      setDocxBytes(null);
 
       if (mode === "unsupported") {
         setLoading(false);
@@ -130,21 +131,8 @@ export function FilePreviewModal({ file, onClose }: FilePreviewModalProps) {
         }
 
         if (mode === "docx") {
-          try {
-            const { html } = await parseDocxToHtml(decryptedBytes);
-            setTextContent(html);
-            return;
-          } catch (docxErr) {
-            console.warn("Failed to parse docx preview:", docxErr);
-            const decoded = new TextDecoder("utf-8", { fatal: false }).decode(decryptedBytes);
-            const matches = decoded.match(/<w:t[^>]*>(.*?)<\/w:t>/g);
-            if (matches && matches.length > 0) {
-              const plain = matches.map((m) => m.replace(/<[^>]*>/g, "")).join(" ");
-              setTextContent(`<p>${plain}</p>`);
-              return;
-            }
-            throw new Error("Unable to parse Word document preview");
-          }
+          setDocxBytes(decryptedBytes);
+          return;
         }
 
         if (mode === "text") {
@@ -209,9 +197,6 @@ export function FilePreviewModal({ file, onClose }: FilePreviewModalProps) {
       window.open(url, "_blank", "noopener,noreferrer");
       return;
     }
-    if (supportsPages) {
-      void handleOpenInPages();
-    }
   };
 
   return (
@@ -230,11 +215,11 @@ export function FilePreviewModal({ file, onClose }: FilePreviewModalProps) {
                 onClick={handleOpenInPages}
                 title="Open in Formstr Pages"
               >
-                <DocPagesIcon />
+                <img src="/pages-favicon.svg" alt="" width={18} height={18} />
                 <span>Open in Pages</span>
               </button>
             )}
-            {(blobUrl || textContent !== null || supportsPages) && (
+            {(blobUrl || textContent !== null) && (
               <button
                 type="button"
                 className="preview-header-tab-btn"
@@ -280,9 +265,9 @@ export function FilePreviewModal({ file, onClose }: FilePreviewModalProps) {
             <PdfPreview blobUrl={blobUrl} name={file.name} />
           )}
 
-          {!loading && !error && mode === "docx" && textContent !== null && (
+          {!loading && !error && mode === "docx" && docxBytes !== null && (
             <DocxPreview
-              htmlContent={textContent}
+              data={docxBytes}
               name={file.name}
               onOpenInPages={handleOpenInPages}
             />

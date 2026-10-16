@@ -1,4 +1,4 @@
-import { PreviewEyeIcon, ShareIcon, DocPagesIcon } from "../icons/Icons";
+import { PreviewEyeIcon, ShareIcon } from "../icons/Icons";
 
 export interface FileMenuProps {
   onView: () => void;
@@ -32,7 +32,7 @@ export function FileMenu({
 
       {onOpenInPages && (
         <button type="button" role="menuitem" className="file-menu-item" onClick={onOpenInPages}>
-          <DocPagesIcon />
+          <img src="/pages-favicon.svg" alt="" width={16} height={16} />
           <span>Open in Formstr Pages</span>
         </button>
       )}
