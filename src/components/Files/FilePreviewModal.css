@@ -247,3 +247,52 @@
     padding: var(--space-5);
   }
 }
+
+.docx-formatted-content h1 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 1.5rem 0 0.75rem 0;
+  color: #111827;
+}
+
+.docx-formatted-content h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 1.25rem 0 0.5rem 0;
+  color: #1f2937;
+}
+
+.docx-formatted-content h3 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 1rem 0 0.5rem 0;
+  color: #374151;
+}
+
+.docx-formatted-content p {
+  margin: 0.6rem 0;
+  color: #374151;
+}
+
+.docx-formatted-content table.docx-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  font-size: 0.9rem;
+}
+
+.docx-formatted-content table.docx-table td {
+  border: 1px solid #d1d5db;
+  padding: 8px 12px;
+}
+
+.docx-formatted-content ul,
+.docx-formatted-content ol {
+  margin: 0.6rem 0;
+  padding-left: 1.5rem;
+}
+
+.docx-formatted-content li {
+  margin: 0.3rem 0;
+}
+

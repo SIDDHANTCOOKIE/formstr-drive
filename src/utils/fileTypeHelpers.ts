@@ -1,4 +1,4 @@
-export type PreviewMode = "image" | "video" | "pdf" | "text" | "html" | "unsupported";
+export type PreviewMode = "image" | "video" | "pdf" | "text" | "html" | "docx" | "unsupported";
 
 export const MAX_PREVIEW_SIZE = 5 * 1024 * 1024; // 5 MB
 export const PREVIEW_UNAVAILABLE_MESSAGE = "Preview isn't available for this file. Download it to view.";
@@ -14,6 +14,15 @@ export function resolvePreviewMode(fileType: string, fileName?: string): Preview
     lowerName.endsWith(".htm")
   ) {
     return "html";
+  }
+
+  if (
+    normalizedType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    normalizedType === "application/msword" ||
+    lowerName.endsWith(".docx") ||
+    lowerName.endsWith(".doc")
+  ) {
+    return "docx";
   }
 
   if (normalizedType.startsWith("image/")) return "image";

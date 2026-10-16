@@ -13,6 +13,8 @@ import { VideoPreview } from '../preview/VideoPreview';
 import { PdfPreview } from '../preview/PdfPreview';
 import { TextPreview } from '../preview/TextPreview';
 import { HtmlPreview } from '../preview/HtmlPreview';
+import { DocxPreview } from '../preview/DocxPreview';
+import { parseDocxToHtml } from '../../utils/docxParser';
 import { DocPagesIcon, ExternalLinkIcon } from '../icons/Icons';
 
 /**
@@ -125,6 +127,24 @@ export function FilePreviewModal({ file, onClose }: FilePreviewModalProps) {
           const decoded = new TextDecoder().decode(decryptedBytes);
           setTextContent(decoded);
           return;
+        }
+
+        if (mode === "docx") {
+          try {
+            const { html } = await parseDocxToHtml(decryptedBytes);
+            setTextContent(html);
+            return;
+          } catch (docxErr) {
+            console.warn("Failed to parse docx preview:", docxErr);
+            const decoded = new TextDecoder("utf-8", { fatal: false }).decode(decryptedBytes);
+            const matches = decoded.match(/<w:t[^>]*>(.*?)<\/w:t>/g);
+            if (matches && matches.length > 0) {
+              const plain = matches.map((m) => m.replace(/<[^>]*>/g, "")).join(" ");
+              setTextContent(`<p>${plain}</p>`);
+              return;
+            }
+            throw new Error("Unable to parse Word document preview");
+          }
         }
 
         if (mode === "text") {
@@ -260,12 +280,25 @@ export function FilePreviewModal({ file, onClose }: FilePreviewModalProps) {
             <PdfPreview blobUrl={blobUrl} name={file.name} />
           )}
 
+          {!loading && !error && mode === "docx" && textContent !== null && (
+            <DocxPreview
+              htmlContent={textContent}
+              name={file.name}
+              onOpenInPages={handleOpenInPages}
+            />
+          )}
+
           {!loading && !error && mode === "html" && textContent !== null && (
             <HtmlPreview htmlContent={textContent} name={file.name} blobUrl={blobUrl} />
           )}
 
           {!loading && !error && mode === "text" && textContent !== null && (
-            <TextPreview textContent={textContent} pagesHint={pagesHint} setPagesHint={setPagesHint} />
+            <TextPreview
+              textContent={textContent}
+              pagesHint={pagesHint}
+              setPagesHint={setPagesHint}
+              onOpenInPages={handleOpenInPages}
+            />
           )}
         </div>
       </div>
