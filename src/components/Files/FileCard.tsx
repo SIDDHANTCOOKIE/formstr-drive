@@ -12,6 +12,8 @@ import {
 import { FILE_HASH_MIME } from '../../utils/constants';
 import { formatSize, formatDate, getHostname } from '../../utils/format';
 import { PreviewEyeIcon, ShareIcon } from '../icons/Icons';
+import { fileKind } from "../../services/thumbnails/kinds";
+import "./thumbnailFit.css";
 import { fetchFilePreview, getCachedPreview, type PreviewData } from "../../services/Preview/fetchPreview";
 
 export interface FileCardProps {
@@ -315,7 +317,7 @@ export const FileCard = memo(function FileCard({
         <div className="file-tile-preview">
           {selectionControl}
           {hasPreview ? (
-            <img src={previewSrc} alt={file.name} className="file-tile-img" draggable={false} />
+            <img src={previewSrc} alt={file.name} className="file-tile-img" data-thumb-kind={fileKind(file)} draggable={false} />
           ) : null}
           <div
             className="file-tile-icon-fallback"
@@ -381,7 +383,7 @@ export const FileCard = memo(function FileCard({
     >
       {selectionControl}
       <div className="file-icon" data-type={icon}>
-        {hasPreview ? <img src={previewSrc} alt="" draggable={false} /> : icon.toUpperCase()}
+        {hasPreview ? <img src={previewSrc} alt="" data-thumb-kind={fileKind(file)} draggable={false} /> : icon.toUpperCase()}
       </div>
       <div className="file-info">
         <span className="file-name" title={file.name}>{file.name}</span>
