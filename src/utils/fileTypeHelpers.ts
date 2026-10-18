@@ -37,6 +37,13 @@ export function browserMayPlayVideo(fileType: string): boolean {
   return document.createElement("video").canPlayType(fileType) !== "";
 }
 
+/** Short notice for a file type the app has no viewer for, naming the extension when there is one. */
+export function unsupportedTypeMessage(fileName: string): string {
+  const dot = fileName.lastIndexOf(".");
+  const ext = dot > 0 && dot < fileName.length - 1 ? fileName.slice(dot).toLowerCase() : "";
+  return ext ? `Preview isn't available for ${ext} files.` : "Preview isn't available for this file type.";
+}
+
 export function unsupportedVideoMessage(fileName: string): string {
   const dot = fileName.lastIndexOf(".");
   const ext = dot > 0 && dot < fileName.length - 1 ? fileName.slice(dot) : "";

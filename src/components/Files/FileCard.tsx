@@ -8,7 +8,9 @@ import {
   browserMayPlayVideo,
   PREVIEW_UNAVAILABLE_MESSAGE,
   unsupportedVideoMessage,
+  unsupportedTypeMessage,
 } from '../../utils/fileTypeHelpers';
+import { canOpenInPages } from '../../utils/docsIntegrationHelpers';
 import { FILE_HASH_MIME } from '../../utils/constants';
 import { formatSize, formatDate, getHostname } from '../../utils/format';
 import { PreviewEyeIcon, ShareIcon } from '../icons/Icons';
@@ -85,8 +87,15 @@ export interface PreviewGateOptions {
   maxPreviewSize?: number;
 }
 
-export function canOpenPreview(opts: PreviewGateOptions): { allowed: boolean; reason?: string } {
+export type PreviewGate = { allowed: boolean; reason?: string; severity?: "info" | "error" };
+
+export function canOpenPreview(opts: PreviewGateOptions): PreviewGate {
   const mode = resolvePreviewMode(opts.fileType, opts.fileName);
+  // No viewer for this type: say so up front instead of opening a modal that only says it.
+  // Files Pages can open (e.g. .odt) still get the modal, which carries that button.
+  if (mode === "unsupported" && !canOpenInPages({ type: opts.fileType, name: opts.fileName })) {
+    return { allowed: false, reason: unsupportedTypeMessage(opts.fileName ?? ""), severity: "info" };
+  }
   if (mode === "video" && !browserMayPlayVideo(opts.fileType)) {
     return { allowed: false, reason: unsupportedVideoMessage(opts.fileName ?? "") };
   }

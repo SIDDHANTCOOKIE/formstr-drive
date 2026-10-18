@@ -24,9 +24,9 @@ async function embeddedThumbnail(zip: ZipReader): Promise<Uint8Array | null> {
     const bytes = await zip.read(path);
     if (!bytes?.length) continue;
     try {
-      return await imageBytesToThumbnail(bytes, mime);
+      return await imageBytesToThumbnail(bytes, mime, { rejectBlank: true });
     } catch {
-      // A corrupt embedded image should not stop the other fallbacks.
+      // A corrupt or blank embedded image should not stop the other fallbacks.
     }
   }
   return null;
