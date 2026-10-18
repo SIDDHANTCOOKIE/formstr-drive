@@ -1,8 +1,8 @@
 .shared-by-me {
   padding: var(--space-8);
-  max-width: 800px;
-  margin: 0 auto;
   width: 100%;
+  height: 100%;
+  overflow-y: auto;
 }
 
 .shared-by-me-header {

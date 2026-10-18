@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
+  <!-- Form* Drive mark — ink plate, files (document lines + Form* asterisk stamp) fanned out of an off-white pocket. -->
+  <rect width="96" height="96" rx="20" fill="#0B0B0C"/>
+  <g transform="translate(4,2) scale(0.88)">
+    <g transform="rotate(-24 50 78)"><rect x="34" y="18" width="32" height="46" rx="4" fill="#7A2629"/><path d="M40 26H60M40 34H60M40 42H52" stroke="#B83A3F" stroke-width="3" stroke-linecap="round" fill="none"/></g>
+    <g transform="rotate(24 50 78)"><rect x="34" y="18" width="32" height="46" rx="4" fill="#B83A3F"/><path d="M40 26H60M40 34H60M40 42H52" stroke="#E5484D" stroke-width="3" stroke-linecap="round" fill="none"/></g>
+    <rect x="34" y="14" width="32" height="46" rx="4" fill="#E5484D"/>
+    <path d="M50 21V33M44.8 24L55.2 30M55.2 24L44.8 30" stroke="#F4F4F3" stroke-width="3.2" stroke-linecap="round" fill="none"/>
+    <path d="M40 40H60" stroke="#F4F4F3" stroke-width="3" stroke-linecap="round" fill="none"/>
+    <rect x="14" y="48" width="72" height="42" rx="8" fill="#F4F4F3"/>
+  </g>
+</svg>
