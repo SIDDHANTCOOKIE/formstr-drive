@@ -10,13 +10,11 @@ import { renderAsync } from "docx-preview";
 
 interface DocxPreviewProps {
   data: Uint8Array | Blob;
-  name: string;
   onOpenInPages?: () => void;
 }
 
 export const DocxPreview: React.FC<DocxPreviewProps> = ({
   data,
-  name,
   onOpenInPages,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);

@@ -101,7 +101,11 @@ describe("HTML Preview & Pages Integration", () => {
         encryptionAlgorithm: "aes-256-gcm",
       };
 
+      // Production builds (the live site and the Android app, whose WebView is
+      // served from "localhost") must target the live Pages site.
+      vi.stubEnv("DEV", false);
       openInNostrDocs(file);
+      vi.unstubAllEnvs();
 
       expect(globalThis.window.open).toHaveBeenCalled();
       expect(openedUrl).toContain("https://pages.formstr.app/#payload=");

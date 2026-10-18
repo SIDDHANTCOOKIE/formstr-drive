@@ -268,7 +268,6 @@ export function FilePreviewModal({ file, onClose }: FilePreviewModalProps) {
           {!loading && !error && mode === "docx" && docxBytes !== null && (
             <DocxPreview
               data={docxBytes}
-              name={file.name}
               onOpenInPages={handleOpenInPages}
             />
           )}
