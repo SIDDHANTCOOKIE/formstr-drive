@@ -9,50 +9,17 @@
 import { encodeCanvas } from "../encode";
 import { THUMB_MAX } from "../limits";
 
-const ROOT = "thumb-doc-root";
 const XHTML = "http://www.w3.org/1999/xhtml";
 const LOAD_TIMEOUT_MS = 10_000;
 const REMOVE = "script, link, iframe, frame, object, embed, base, meta, noscript, audio, video, source";
 
 /**
- * Maps selectors that target the page itself (html, body, :root) onto the
- * wrapper element we render into. "html body" collapses to a single root.
+ * Serializes the parsed page as it is, html and body elements included, so the
+ * author's own rules (html, body, :root, custom properties, @media, nesting)
+ * apply exactly as written: no selector rewriting, nothing to get wrong. The
+ * SVG root is the document's :root, so custom properties defined there inherit
+ * down into the page.
  */
-export function retargetSelector(selector: string): string {
-  return selector
-    .replace(/(^|[\s>+~,(])(?:html|body|:root)(?![\w-])/gi, `$1.${ROOT}`)
-    .replace(new RegExp(`\\.${ROOT}(?:\\s*[>+~]?\\s*)\\.${ROOT}(?![\\w-])`, "g"), `.${ROOT}`);
-}
-
-function retargetRules(rules: CSSRuleList): void {
-  for (const rule of Array.from(rules)) {
-    if (rule instanceof CSSStyleRule) {
-      rule.selectorText = retargetSelector(rule.selectorText);
-    } else if ("cssRules" in rule) {
-      retargetRules((rule as CSSGroupingRule).cssRules);
-    }
-  }
-}
-
-/** Author CSS with its page-level selectors retargeted, through the CSSOM rather than regex. */
-function retargetedCss(source: string): string {
-  try {
-    const sheet = new CSSStyleSheet();
-    sheet.replaceSync(source); // drops @import
-    retargetRules(sheet.cssRules);
-    return Array.from(sheet.cssRules)
-      .map((rule) => rule.cssText)
-      .join("\n");
-  } catch {
-    return ""; // renders unstyled rather than failing
-  }
-}
-
-function styleElement(css: string): string {
-  // CDATA keeps valid CSS containing < or & well-formed inside the XML document.
-  return `<style xmlns="${XHTML}"><![CDATA[${css.replace(/\]\]>/g, "]]]]><![CDATA[>")}]]></style>`;
-}
-
 function buildSvg(html: string, width: number): string {
   const doc = new DOMParser().parseFromString(html, "text/html");
   doc.querySelectorAll(REMOVE).forEach((el) => el.remove());
@@ -61,23 +28,28 @@ function buildSvg(html: string, width: number): string {
       if (attr.name.startsWith("on") || /^\s*javascript:/i.test(attr.value)) el.removeAttribute(attr.name);
     }
   });
+  doc.querySelectorAll("style").forEach((style) => {
+    // An @import url can contain ";" (Google Fonts does), so match the url token, not up to the first ";".
+    style.textContent = (style.textContent ?? "").replace(
+      /@import\s+(?:url\([^)]*\)|"[^"]*"|'[^']*')[^;]*;/gi,
+      "",
+    );
+  });
 
-  const styles = Array.from(doc.querySelectorAll("style")).map((s) => styleElement(retargetedCss(s.textContent ?? "")));
-  doc.querySelectorAll("style").forEach((s) => s.remove());
+  // A page whose body is shorter than the frame would otherwise leave the rest unpainted.
+  const base = doc.createElement("style");
+  base.textContent = "body{min-height:100%}";
+  doc.head.prepend(base);
 
-  const root = doc.createElement("div");
-  root.className = ROOT;
-  root.setAttribute(
+  const page = doc.documentElement;
+  page.setAttribute(
     "style",
-    `width:${width}px;height:${width}px;overflow:hidden;box-sizing:border-box;${doc.body.getAttribute("style") ?? ""}`,
+    `${page.getAttribute("style") ?? ""};display:block;width:${width}px;height:${width}px;overflow:hidden`,
   );
-  root.append(...Array.from(doc.body.childNodes));
-
-  const defaults = styleElement(`.${ROOT}{background:#fff;color:#111;font-family:system-ui,sans-serif;margin:0}`);
-  const markup = new XMLSerializer().serializeToString(root);
+  const markup = new XMLSerializer().serializeToString(page);
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${width}">` +
-    `<foreignObject width="100%" height="100%">${defaults}${styles.join("")}${markup}</foreignObject></svg>`
+    `<foreignObject width="100%" height="100%">${markup}</foreignObject></svg>`
   );
 }
 

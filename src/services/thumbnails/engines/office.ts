@@ -1,7 +1,7 @@
 import { imageBytesToThumbnail } from "../encode";
 import { DOCX_RENDER_MAX_BYTES } from "../limits";
 import { renderDocumentThumbnail } from "../render/document";
-import { drawTextPage } from "../render/textPage";
+import { drawSlideCard, drawTextPage } from "../render/textPage";
 import { openZip, type ZipReader } from "../zip";
 
 const EMBEDDED_THUMBNAILS = [
@@ -12,6 +12,8 @@ const EMBEDDED_THUMBNAILS = [
 ];
 
 const W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+const A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";
+const P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main";
 const TEXT_LINES = 14;
 /** Unique class so a thumbnail render never collides with the styles of an open docx preview. */
 const DOCX_CLASS = "thumbdocx";
@@ -52,7 +54,7 @@ async function renderFirstPage(file: File, signal: AbortSignal): Promise<Uint8Ar
     const page = host.querySelector<HTMLElement>(`section.${DOCX_CLASS}`);
     if (!page) throw new Error("Document has no pages");
     const styles = Array.from(host.querySelectorAll("style"), (s) => s.outerHTML).join("");
-    return await renderDocumentThumbnail(`${styles}${page.outerHTML}`, Math.round(page.getBoundingClientRect().width) || 794, signal);
+    return await renderDocumentThumbnail(`<style>body{margin:0}</style>${styles}${page.outerHTML}`, Math.round(page.getBoundingClientRect().width) || 794, signal);
   } finally {
     host.remove();
   }
@@ -70,6 +72,30 @@ async function paragraphsPage(zip: ZipReader): Promise<Uint8Array | null> {
     if (lines.length >= TEXT_LINES) break;
   }
   return lines.length ? drawTextPage(lines, { monospace: false }) : null;
+}
+
+/** The first slide drawn as a card (its background colour, title and text), for decks saved without a preview image. */
+async function firstSlideCard(zip: ZipReader): Promise<Uint8Array | null> {
+  const xml = await zip.read("ppt/slides/slide1.xml");
+  if (!xml) return null;
+  const doc = new DOMParser().parseFromString(new TextDecoder().decode(xml), "application/xml");
+
+  let title = "";
+  const lines: string[] = [];
+  for (const shape of Array.from(doc.getElementsByTagNameNS(P_NS, "sp"))) {
+    const placeholder = shape.getElementsByTagNameNS(P_NS, "ph")[0]?.getAttribute("type") ?? "";
+    for (const paragraph of Array.from(shape.getElementsByTagNameNS(A_NS, "p"))) {
+      const text = Array.from(paragraph.getElementsByTagNameNS(A_NS, "t"), (t) => t.textContent ?? "").join("").trim();
+      if (!text) continue;
+      if (!title && /title/i.test(placeholder)) title = text;
+      else lines.push(text);
+    }
+  }
+  if (!title && lines.length) title = lines.shift()!;
+  if (!title && !lines.length) return null;
+
+  const fill = doc.getElementsByTagNameNS(P_NS, "bg")[0]?.getElementsByTagNameNS(A_NS, "srgbClr")[0]?.getAttribute("val");
+  return drawSlideCard({ title, lines, background: fill && /^[0-9a-f]{6}$/i.test(fill) ? `#${fill}` : "#ffffff" });
 }
 
 /**
@@ -95,6 +121,10 @@ export async function officeThumbnail(file: File, signal: AbortSignal): Promise<
     }
     const page = await paragraphsPage(zip);
     if (page) return page;
+  }
+  if (zip.names.includes("ppt/slides/slide1.xml")) {
+    const card = await firstSlideCard(zip);
+    if (card) return card;
   }
   throw new Error("No preview available for this document");
 }

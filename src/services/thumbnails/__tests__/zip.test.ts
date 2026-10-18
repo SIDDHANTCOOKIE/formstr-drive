@@ -1,7 +1,6 @@
 import { deflateRawSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { openZip } from "../zip";
-import { retargetSelector } from "../render/document";
 
 type Entry = { name: string; data: Uint8Array; deflate?: boolean; flags?: number };
 
@@ -103,34 +102,5 @@ describe("openZip", () => {
   it("returns null for data that is not a zip", async () => {
     expect(await openZip(new Blob(["definitely not a zip file at all, just plain text"]))).toBeNull();
     expect(await openZip(new Blob([]))).toBeNull();
-  });
-});
-
-describe("retargetSelector", () => {
-  const root = ".thumb-doc-root";
-
-  it("maps page-level selectors onto the wrapper", () => {
-    expect(retargetSelector("body")).toBe(root);
-    expect(retargetSelector("html")).toBe(root);
-    expect(retargetSelector(":root")).toBe(root);
-    expect(retargetSelector("body.dark")).toBe(`${root}.dark`);
-    expect(retargetSelector("html, body")).toBe(`${root}, ${root}`);
-  });
-
-  it("collapses html body into a single root", () => {
-    expect(retargetSelector("html body")).toBe(root);
-    expect(retargetSelector("html > body")).toBe(root);
-  });
-
-  it("keeps descendant selectors under the root", () => {
-    expect(retargetSelector("body h1")).toBe(`${root} h1`);
-    expect(retargetSelector("body > .card")).toBe(`${root} > .card`);
-  });
-
-  it("leaves class names and other words that merely contain body or html alone", () => {
-    expect(retargetSelector(".body")).toBe(".body");
-    expect(retargetSelector(".html-content")).toBe(".html-content");
-    expect(retargetSelector("#body")).toBe("#body");
-    expect(retargetSelector("section.body-text")).toBe("section.body-text");
   });
 });
